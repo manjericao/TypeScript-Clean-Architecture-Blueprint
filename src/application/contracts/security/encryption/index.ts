@@ -1,0 +1,1 @@
+export { IPasswordHasher } from './IPasswordHasher';

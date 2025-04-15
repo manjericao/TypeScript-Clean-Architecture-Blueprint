@@ -1,0 +1,22 @@
+{
+  "entryPoints": ["src"],
+  "entryPointStrategy": "expand",
+  "out": "docs",
+  "exclude": ["**/node_modules/**", "**/*.spec.ts", "**/*.test.ts"],
+  "excludePrivate": true,
+  "excludeNotDocumented": false,
+  "readme": "README.md",
+  "name": "Backend API Documentation",
+  "includeVersion": true,
+  "skipErrorChecking": true,
+  "plugin": ["typedoc-plugin-markdown"],
+  "tsconfig": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@enterprise/*": ["src/enterprise/*"],
+      "@infrastructure/*": ["src/infrastructure/*"],
+      "@application/*": ["src/application/*"],
+      "@interface/*": ["src/interface/*"]
+    }
+  }
+}

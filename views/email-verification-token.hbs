@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Email Address</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    .container {
+      background-color: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      padding: 30px;
+    }
+    .header {
+      text-align: center;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 15px;
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      color: #007bff;
+      margin: 0;
+    }
+    .content {
+      margin-bottom: 25px;
+    }
+    .cta-button {
+      display: block;
+      width: 200px;
+      margin: 25px auto;
+      padding: 12px 20px;
+      background-color: #007bff;
+      color: white;
+      text-align: center;
+      text-decoration: none;
+      border-radius: 5px;
+      font-weight: bold;
+      transition: background-color 0.3s ease;
+    }
+    .cta-button:hover {
+      background-color: #0056b3;
+    }
+    .footer {
+      text-align: center;
+      color: #777;
+      font-size: 12px;
+      margin-top: 20px;
+    }
+    .warning {
+      background-color: #f8f9fa;
+      border-left: 4px solid #ffc107;
+      padding: 10px;
+      margin-top: 20px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Email Verification</h1>
+  </div>
+
+  <div class="content">
+    <p>Hello {{name}},</p>
+
+    <p>Thank you for registering. Please click the button below to verify your email address.</p>
+
+    <p class="warning">
+      <strong>Note:</strong>
+      This link will expire in {{expiresInHours}} hours.
+    </p>
+
+    <a href="{{verificationUrl}}" class="cta-button">Verify Email</a>
+  </div>
+
+  <div class="footer">
+    <p>© {{currentYear}} Manjericao Company. All rights reserved.</p>
+    <p>If you need help, contact our support team.</p>
+  </div>
+</div>
+</body>
+</html>

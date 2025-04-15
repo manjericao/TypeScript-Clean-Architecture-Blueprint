@@ -1,0 +1,1 @@
+export { ForgotPasswordEvent } from './ForgotPasswordEvent';

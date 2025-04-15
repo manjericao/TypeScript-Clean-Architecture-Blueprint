@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "module": "commonjs",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "baseUrl": "./",
+    "paths": {
+      "@enterprise/*": ["src/enterprise/*"],
+      "@infrastructure/*": ["src/infrastructure/*"],
+      "@application/*": ["src/application/*"],
+      "@interface/*": ["src/interface/*"]
+    },
+    "moduleResolution": "node",
+    "typeRoots": ["./node_modules/@types", "./lib"]
+  },
+  "include": [
+    "src",
+    "lib"
+  ]
+}

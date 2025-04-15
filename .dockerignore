@@ -1,0 +1,56 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Build output
+dist
+build
+coverage
+logs
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Development files
+*.md
+*.log
+*.test.ts
+*.spec.ts
+.eslintrc
+.prettierrc
+.husky
+.vscode
+.idea
+
+# Docker
+Dockerfile
+docker-compose*
+.docker
+
+# Temporary files
+.tmp
+.temp
+*.swp
+*.swo
+
+# Documentation
+docs
+
+# Tests
+test
+tests
+__tests__
+*.test.*
+*.spec.*
+
+# Other
+.DS_Store
+*.pem

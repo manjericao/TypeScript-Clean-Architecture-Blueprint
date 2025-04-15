@@ -1,0 +1,1 @@
+export { UserWithPasswordDTO } from './UserWithPasswordDTO';

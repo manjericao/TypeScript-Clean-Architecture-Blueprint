@@ -1,0 +1,1 @@
+export { RedisConnection } from './Connection';
