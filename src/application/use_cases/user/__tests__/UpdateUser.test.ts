@@ -1,320 +1,486 @@
-import { UpdateUser } from '@application/use_cases/user/UpdateUser';
-import { UserResponseDTO } from '@enterprise/dto/output';
-import { UserRole, Gender } from '@enterprise/enum';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { faker } from '@faker-js/faker';
-import { validate } from 'class-validator';
-import { UpdateUserDTO } from '@enterprise/dto/input/user';
-import { ILogger } from '@application/contracts/infrastructure';
+
 import { IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { GetUserInputDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
+import { UserResponseDTO } from '@enterprise/dto/output';
+import { OperationError } from '@application/use_cases/base';
+import { UserRole } from '@enterprise/enum';
+import { UpdateUser } from '@application/use_cases/user'; // Adjust path if necessary
 
-// Mock external dependencies
-jest.mock('class-validator');
+// --- Mocks ---
 
-describe('UpdateUser', () => {
-  // Test setup variables
+const mockUserRepository: jest.Mocked<IUserRepository> = {
+  findAll: jest.fn(),
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  findByUsername: jest.fn(),
+  findByEmailWithPassword: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
+
+const mockLogger: jest.Mocked<ILogger> = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+// --- Helper Functions ---
+
+const createFakeUserResponseDTO = (id?: string, overrides: Partial<UserResponseDTO> = {}): UserResponseDTO => ({
+  id: id ?? faker.string.uuid(),
+  username: faker.internet.username(),
+  name: faker.person.fullName(),
+  email: faker.internet.email(),
+  role: faker.helpers.arrayElement(Object.values(UserRole)),
+  isVerified: faker.datatype.boolean(),
+  ...overrides,
+});
+
+const createFakeUpdateUserDTO = (overrides: Partial<UpdateUserDTO> = {}): UpdateUserDTO => ({
+  name: faker.person.fullName(),
+  email: faker.internet.email(),
+  username: faker.internet.username(),
+  role: faker.helpers.arrayElement(Object.values(UserRole)),
+  ...overrides,
+});
+
+// --- Test Suite ---
+
+describe('UpdateUser Use Case', () => {
   let updateUser: UpdateUser;
-  let mockUserRepository: jest.Mocked<IUserRepository>;
-  let mockLogger: jest.Mocked<ILogger>;
+  let existingUser: UserResponseDTO;
+  let userInputDTO: GetUserInputDTO;
+  let updateDataDTO: UpdateUserDTO;
 
-  // Sample data
-  const userId = faker.string.uuid();
-  const mockExistingUser: UserResponseDTO = {
-    id: userId,
-    name: faker.person.fullName(),
-    email: faker.internet.email(),
-    username: faker.internet.username(),
-    role: UserRole.USER,
-    birthDate: faker.date.past(),
-    gender: Gender.FEMALE,
-    isVerified: false
-  };
+  // Mock event handlers
+  let onSuccess: jest.Mock;
+  let onError: jest.Mock;
+  let onUserNotFound: jest.Mock;
+  let onEmailTaken: jest.Mock;
+  let onUsernameTaken: jest.Mock;
+  // Remove VALIDATION_ERROR handler as it's not explicitly defined in the provided UpdateUser code
+  // let onValidationError: jest.Mock;
 
-  // Setup before each test
   beforeEach(() => {
-    mockUserRepository = {
-      findById: jest.fn(),
-      findByEmail: jest.fn(),
-      findByUsername: jest.fn(),
-      update: jest.fn(),
-      create: jest.fn(),
-      findByAll: jest.fn(),
-      findAll: jest.fn(),
-      delete: jest.fn()
-    } as unknown as jest.Mocked<IUserRepository>;
+    // Reset mocks before each test
+    jest.resetAllMocks();
 
-    mockLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
-      debug: jest.fn()
-    } as unknown as jest.Mocked<ILogger>;
-
-    (validate as jest.Mock).mockResolvedValue([]);
-
+    // Instantiate the use case with mocks
     updateUser = new UpdateUser(mockUserRepository, mockLogger);
+
+    // Initialize mock event handlers
+    onSuccess = jest.fn();
+    onError = jest.fn();
+    onUserNotFound = jest.fn();
+    onEmailTaken = jest.fn();
+    onUsernameTaken = jest.fn();
+    // onValidationError = jest.fn(); // Removed
+
+    // Attach mock handlers to the use case instance
+    updateUser.on('SUCCESS', onSuccess);
+    updateUser.on('ERROR', onError);
+    updateUser.on('USER_NOT_FOUND', onUserNotFound);
+    updateUser.on('EMAIL_TAKEN', onEmailTaken);
+    updateUser.on('USERNAME_TAKEN', onUsernameTaken);
+    // updateUser.on('VALIDATION_ERROR', onValidationError); // Removed
+
+    // Prepare default fake data
+    existingUser = createFakeUserResponseDTO();
+    userInputDTO = { id: existingUser.id }; // Input to identify the user
+    updateDataDTO = createFakeUpdateUserDTO({ // Ensure updates differ from existing
+      name: `Updated ${existingUser.name}`,
+      email: `updated.${existingUser.email}`,
+      username: `updated_${existingUser.username}`
+    });
   });
 
-  afterEach(() => {
-    jest.clearAllMocks();
-  });
+  // --- Test Cases ---
 
-  it('should successfully update a user', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName(),
-      isVerified: true
-    };
+  describe('execute', () => {
+    it('should emit SUCCESS with updated user data when user exists and updates are valid', async () => {
+      // Arrange
+      const updatedUserResponse = { ...existingUser, ...updateDataDTO, id: existingUser.id }; // Simulate repository response
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockResolvedValue(undefined); // Assume new email is not taken
+      mockUserRepository.findByUsername.mockResolvedValue(undefined); // Assume new username is not taken
+      mockUserRepository.update.mockResolvedValue(updatedUserResponse);
 
-    const updatedUser = {
-      ...mockExistingUser,
-      ...updates,
-      updatedAt: new Date()
-    };
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.update.mockResolvedValue(updatedUser);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(existingUser.id);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(updateDataDTO.email);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledWith(updateDataDTO.username);
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledWith(existingUser.id, updateDataDTO);
 
-    const successSpy = jest.fn();
-    updateUser.onTyped('SUCCESS', successSpy);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(updatedUserResponse);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
+      // expect(onValidationError).not.toHaveBeenCalled(); // Removed
 
-    // Act
-    await updateUser.execute(userId, updates);
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser operation started'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking if user exists'), { userId: existingUser.id });
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for conflicting email'), { userId: existingUser.id });
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for conflicting username'), { userId: existingUser.id });
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Attempting to update user in repository'), { userId: existingUser.id, updates: updateDataDTO });
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser succeeded'), { userId: existingUser.id });
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
 
-    // Assert
-    expect(mockLogger.info).toHaveBeenCalledWith('Updating user', { userId });
-    expect(mockUserRepository.findById).toHaveBeenCalledWith(userId);
-    expect(mockUserRepository.update).toHaveBeenCalledWith(userId, updates);
-    expect(mockLogger.info).toHaveBeenCalledWith('User updated successfully', { userId });
-    expect(successSpy).toHaveBeenCalledWith(updatedUser);
-  });
+    it('should emit SUCCESS when updating fields other than email or username', async () => {
+      // Arrange
+      const nonConflictUpdateData: UpdateUserDTO = { name: 'New Name Only' };
+      const updatedUserResponse = { ...existingUser, ...nonConflictUpdateData, id: existingUser.id };
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      // findByEmail and findByUsername should not be called if email/username are not in updates
+      mockUserRepository.update.mockResolvedValue(updatedUserResponse);
 
-  it('should emit validation error when update data is invalid', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      email: 'invalid-email'
-    };
+      // Act
+      await updateUser.execute(userInputDTO, nonConflictUpdateData);
 
-    const validationErrors = [{ property: 'email', constraints: { isEmail: 'Email must be valid' } }];
-    (validate as jest.Mock).mockResolvedValue(validationErrors);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(existingUser.id);
+      expect(mockUserRepository.findByEmail).not.toHaveBeenCalled(); // Not called
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled(); // Not called
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledWith(existingUser.id, nonConflictUpdateData);
 
-    const validationErrorSpy = jest.fn();
-    updateUser.onTyped('VALIDATION_ERROR', validationErrorSpy);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(updatedUserResponse);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-    // Act
-    await updateUser.execute(userId, updates);
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser operation started'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking if user exists'), expect.any(Object));
+      // No conflicting email/username debug logs
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Attempting to update user'), expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser succeeded'), expect.any(Object));
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
 
-    // Assert
-    expect(validate).toHaveBeenCalledWith(updates);
-    expect(validationErrorSpy).toHaveBeenCalledWith(validationErrors);
-    expect(mockUserRepository.update).not.toHaveBeenCalled();
-  });
+    it('should emit SUCCESS when updating email to one already used by the *same* user', async () => {
+      // Arrange
+      const sameEmailUpdateData: UpdateUserDTO = { email: existingUser.email }; // Same email
+      // Update should still be called, even if only other fields changed or just to update timestamps
+      const updatedUserResponse = { ...existingUser, ...sameEmailUpdateData, id: existingUser.id };
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      // findByEmail will not be called because updates.email === existingUser.email
+      mockUserRepository.update.mockResolvedValue(updatedUserResponse);
 
-  it('should emit USER_NOT_FOUND if user does not exist', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName()
-    };
+      // Act
+      await updateUser.execute(userInputDTO, sameEmailUpdateData);
 
-    mockUserRepository.findById.mockResolvedValue(undefined);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).not.toHaveBeenCalled(); // Not called due to same email check
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled(); // Assuming username wasn't updated
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledWith(existingUser.id, sameEmailUpdateData);
 
-    const notFoundSpy = jest.fn();
-    updateUser.onTyped('USER_NOT_FOUND', notFoundSpy);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(updatedUserResponse);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
+    });
 
-    // Act
-    await updateUser.execute(userId, updates);
+    it('should emit SUCCESS when updating username to one already used by the *same* user', async () => {
+      // Arrange
+      const sameUsernameUpdateData: UpdateUserDTO = { username: existingUser.username }; // Same username
+      // Update should still be called
+      const updatedUserResponse = { ...existingUser, ...sameUsernameUpdateData, id: existingUser.id };
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      // findByUsername will not be called because updates.username === existingUser.username
+      mockUserRepository.update.mockResolvedValue(updatedUserResponse);
 
-    // Assert
-    expect(mockUserRepository.findById).toHaveBeenCalledWith(userId);
-    expect(notFoundSpy).toHaveBeenCalledWith(`User with id ${userId} not found`);
-    expect(mockUserRepository.update).not.toHaveBeenCalled();
-  });
+      // Act
+      await updateUser.execute(userInputDTO, sameUsernameUpdateData);
 
-  it('should emit EMAIL_TAKEN when email is already in use by another user', async () => {
-    // Arrange
-    const newEmail = faker.internet.email();
-    const updates: UpdateUserDTO = {
-      email: newEmail
-    };
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).not.toHaveBeenCalled(); // Assuming email wasn't updated
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled(); // Not called due to same username check
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledWith(existingUser.id, sameUsernameUpdateData);
 
-    const otherUser = {
-      ...mockExistingUser,
-      id: faker.string.uuid(),
-      email: newEmail
-    };
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(updatedUserResponse);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
+    });
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.findByEmail.mockResolvedValue(otherUser);
+    it('should emit USER_NOT_FOUND when the user to update does not exist', async () => {
+      // Arrange
+      const nonExistentUserId = faker.string.uuid();
+      userInputDTO = { id: nonExistentUserId };
+      const expectedMessage = `User with id ${nonExistentUserId} not found.`;
+      mockUserRepository.findById.mockResolvedValue(undefined); // Simulate user not found
 
-    const emailTakenSpy = jest.fn();
-    updateUser.onTyped('EMAIL_TAKEN', emailTakenSpy);
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    // Act
-    await updateUser.execute(userId, updates);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(nonExistentUserId);
+      expect(mockUserRepository.findByEmail).not.toHaveBeenCalled();
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled();
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-    // Assert
-    expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(newEmail);
-    expect(emailTakenSpy).toHaveBeenCalledWith(`Email ${newEmail} is already in use`);
-    expect(mockUserRepository.update).not.toHaveBeenCalled();
-  });
+      expect(onUserNotFound).toHaveBeenCalledTimes(1);
+      expect(onUserNotFound).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-  it('should not check email uniqueness if email is not being updated', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName()
-    };
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('UpdateUser failed: User with id'), expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser operation started'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking if user exists'), expect.any(Object));
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.update.mockResolvedValue({ ...mockExistingUser, ...updates });
+    it('should emit EMAIL_TAKEN when the new email is already used by another user', async () => {
+      // Arrange
+      const conflictingUser = createFakeUserResponseDTO(); // Different user ID
+      const expectedMessage = `Email ${updateDataDTO.email} is already in use.`;
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockResolvedValue(conflictingUser); // Email found for DIFFERENT user
+      mockUserRepository.findByUsername.mockResolvedValue(undefined); // Assume username is fine
 
-    // Act
-    await updateUser.execute(userId, updates);
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    // Assert
-    expect(mockUserRepository.findByEmail).not.toHaveBeenCalled();
-    expect(mockUserRepository.update).toHaveBeenCalled();
-  });
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(existingUser.id);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(updateDataDTO.email);
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled(); // Short-circuited
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-  it('should allow updating email to the same value', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      email: mockExistingUser.email
-    };
+      expect(onEmailTaken).toHaveBeenCalledTimes(1);
+      expect(onEmailTaken).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.update.mockResolvedValue({ ...mockExistingUser, ...updates });
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('UpdateUser failed: Email'), expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser operation started'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking if user exists'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for conflicting email'), expect.any(Object));
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
 
-    // Act
-    await updateUser.execute(userId, updates);
+    it('should emit USERNAME_TAKEN when the new username is already used by another user', async () => {
+      // Arrange
+      const conflictingUser = createFakeUserResponseDTO(); // Different user ID
+      const expectedMessage = `Username ${updateDataDTO.username} is already taken.`;
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockResolvedValue(undefined); // Assume email is fine
+      mockUserRepository.findByUsername.mockResolvedValue(conflictingUser); // Username found for DIFFERENT user
 
-    // Assert
-    expect(mockUserRepository.findByEmail).not.toHaveBeenCalled();
-    expect(mockUserRepository.update).toHaveBeenCalled();
-  });
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-  it('should emit USERNAME_TAKEN when username is already in use by another user', async () => {
-    // Arrange
-    const newUsername = faker.internet.username();
-    const updates: UpdateUserDTO = {
-      username: newUsername
-    };
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(existingUser.id);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1); // Email check happens first
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(updateDataDTO.email);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledWith(updateDataDTO.username);
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-    const otherUser = {
-      ...mockExistingUser,
-      id: faker.string.uuid(),
-      username: newUsername
-    };
+      expect(onUsernameTaken).toHaveBeenCalledTimes(1);
+      expect(onUsernameTaken).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.findByUsername.mockResolvedValue(otherUser);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('UpdateUser failed: Username'), expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('UpdateUser operation started'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking if user exists'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for conflicting email'), expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for conflicting username'), expect.any(Object));
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
 
-    const usernameTakenSpy = jest.fn();
-    updateUser.onTyped('USERNAME_TAKEN', usernameTakenSpy);
+    // --- Repository Error Cases ---
 
-    // Act
-    await updateUser.execute(userId, updates);
+    it('should emit ERROR when findById throws an error', async () => {
+      // Arrange
+      const repositoryError = new Error('Database connection error during findById');
+      mockUserRepository.findById.mockRejectedValue(repositoryError);
 
-    // Assert
-    expect(mockUserRepository.findByUsername).toHaveBeenCalledWith(newUsername);
-    expect(usernameTakenSpy).toHaveBeenCalledWith(`Username ${newUsername} is already taken`);
-    expect(mockUserRepository.update).not.toHaveBeenCalled();
-  });
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-  it('should not check username uniqueness if username is not being updated', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName()
-    };
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).not.toHaveBeenCalled();
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled();
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.update.mockResolvedValue({ ...mockExistingUser, ...updates });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'UPDATE_USER_FAILED',
+        message: `Failed to update user: ${repositoryError.message}`,
+        details: repositoryError,
+      }));
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-    // Act
-    await updateUser.execute(userId, updates);
+      expect(mockLogger.error).toHaveBeenCalledTimes(1); // BaseOperation logs on emitError
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation UpdateUser failed'),
+        expect.objectContaining({
+          operation: 'UpdateUser',
+          error: expect.any(OperationError)
+        })
+      );
 
-    // Assert
-    expect(mockUserRepository.findByUsername).not.toHaveBeenCalled();
-    expect(mockUserRepository.update).toHaveBeenCalled();
-  });
+    });
 
-  it('should allow updating username to the same value', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      username: mockExistingUser.username
-    };
+    it('should emit ERROR when findByEmail throws an error', async () => {
+      // Arrange
+      const repositoryError = new Error('Database connection error during findByEmail');
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockRejectedValue(repositoryError); // Error during email check
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.update.mockResolvedValue({ ...mockExistingUser, ...updates });
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    // Act
-    await updateUser.execute(userId, updates);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1); // Attempted
+      expect(mockUserRepository.findByUsername).not.toHaveBeenCalled();
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-    // Assert
-    expect(mockUserRepository.findByUsername).not.toHaveBeenCalled();
-    expect(mockUserRepository.update).toHaveBeenCalled();
-  });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'UPDATE_USER_FAILED',
+        message: `Failed to update user: ${repositoryError.message}`,
+        details: repositoryError,
+      }));
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-  it('should handle concurrent updates of email and username', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      email: faker.internet.email(),
-      username: faker.internet.username()
-    };
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation UpdateUser failed'),
+        expect.objectContaining({
+          operation: 'UpdateUser',
+          error: expect.any(OperationError)
+        })
+      );
+    });
 
-    mockUserRepository.findById.mockResolvedValue(mockExistingUser);
-    mockUserRepository.findByEmail.mockResolvedValue(undefined);
-    mockUserRepository.findByUsername.mockResolvedValue(undefined);
-    mockUserRepository.update.mockResolvedValue({ ...mockExistingUser, ...updates });
+    it('should emit ERROR when findByUsername throws an error', async () => {
+      // Arrange
+      const repositoryError = new Error('Database connection error during findByUsername');
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockResolvedValue(undefined); // Email check passes
+      mockUserRepository.findByUsername.mockRejectedValue(repositoryError); // Error during username check
 
-    const successSpy = jest.fn();
-    updateUser.onTyped('SUCCESS', successSpy);
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    // Act
-    await updateUser.execute(userId, updates);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledTimes(1); // Attempted
+      expect(mockUserRepository.update).not.toHaveBeenCalled();
 
-    // Assert
-    expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(updates.email);
-    expect(mockUserRepository.findByUsername).toHaveBeenCalledWith(updates.username);
-    expect(mockUserRepository.update).toHaveBeenCalledWith(userId, updates);
-    expect(successSpy).toHaveBeenCalled();
-  });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'UPDATE_USER_FAILED',
+        message: `Failed to update user: ${repositoryError.message}`,
+        details: repositoryError,
+      }));
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-  it('should emit ERROR when an exception occurs', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName()
-    };
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation UpdateUser failed'),
+        expect.objectContaining({
+          operation: 'UpdateUser',
+          error: expect.any(OperationError)
+        })
+      );
+    });
 
-    const testError = new Error('Test error');
-    mockUserRepository.findById.mockRejectedValue(testError);
+    it('should emit ERROR when update throws an error', async () => {
+      // Arrange
+      const repositoryError = new Error('Database connection error during update');
+      mockUserRepository.findById.mockResolvedValue(existingUser);
+      mockUserRepository.findByEmail.mockResolvedValue(undefined);
+      mockUserRepository.findByUsername.mockResolvedValue(undefined);
+      mockUserRepository.update.mockRejectedValue(repositoryError); // Error during final update
 
-    const errorSpy = jest.fn();
-    updateUser.onTyped('ERROR', errorSpy);
+      // Act
+      await updateUser.execute(userInputDTO, updateDataDTO);
 
-    // Act
-    await updateUser.execute(userId, updates);
+      // Assert
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1); // Attempted
 
-    // Assert
-    expect(errorSpy).toHaveBeenCalledWith(testError);
-  });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'UPDATE_USER_FAILED',
+        message: `Failed to update user: ${repositoryError.message}`,
+        details: repositoryError,
+      }));
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onEmailTaken).not.toHaveBeenCalled();
+      expect(onUsernameTaken).not.toHaveBeenCalled();
 
-  it('should handle non-Error exceptions and convert them to Error objects', async () => {
-    // Arrange
-    const updates: UpdateUserDTO = {
-      name: faker.person.fullName()
-    };
-
-    const errorString = 'String error';
-    mockUserRepository.findById.mockRejectedValue(errorString);
-
-    const errorSpy = jest.fn();
-    updateUser.onTyped('ERROR', errorSpy);
-
-    // Act
-    await updateUser.execute(userId, updates);
-
-    // Assert
-    const receivedError = errorSpy.mock.calls[0][0];
-    expect(receivedError).toBeInstanceOf(Error);
-    expect(receivedError.message).toBe(errorString);
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation UpdateUser failed'),
+        expect.objectContaining({
+          operation: 'UpdateUser',
+          error: expect.any(OperationError)
+        })
+      );
+    });
   });
 });
