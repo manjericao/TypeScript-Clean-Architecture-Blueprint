@@ -46,7 +46,7 @@ const createFakeUserDTO = (): CreateUserDTO => {
   return {
     name: faker.person.fullName(),
     email: faker.internet.email(),
-    username: faker.internet.userName(),
+    username: faker.internet.username(),
     password: password,
     repeatPassword: password, // Passwords match by default
     role: faker.helpers.arrayElement(Object.values(UserRole)),
@@ -144,7 +144,10 @@ describe('CreateUser Use Case', () => {
       expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('CreateUser operation started'), expect.any(Object));
       expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Checking for existing user'));
       expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Hashing password'));
-      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Attempting to create user'));
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('Attempting to create user in repository'), // Match the string more precisely if needed
+        expect.objectContaining({ email: userDTO.email })  // Add expectation for the second argument (metadata object)
+      );
       expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Published UserCreatedEvent'));
       expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('CreateUser succeeded'), expect.any(Object));
       expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -264,8 +267,10 @@ describe('CreateUser Use Case', () => {
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('CreateUser failed unexpectedly'),
-        expect.objectContaining({ error: repositoryError })
+        expect.stringContaining('Operation CreateUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
       );
     });
 
@@ -298,8 +303,10 @@ describe('CreateUser Use Case', () => {
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('CreateUser failed unexpectedly'),
-        expect.objectContaining({ error: repositoryError })
+        expect.stringContaining('Operation CreateUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
       );
     });
 
@@ -333,8 +340,10 @@ describe('CreateUser Use Case', () => {
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('CreateUser failed unexpectedly'),
-        expect.objectContaining({ error: hasherError })
+        expect.stringContaining('Operation CreateUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
       );
     });
 
@@ -371,8 +380,10 @@ describe('CreateUser Use Case', () => {
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('CreateUser failed unexpectedly'),
-        expect.objectContaining({ error: createError })
+        expect.stringContaining('Operation CreateUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
       );
     });
   });

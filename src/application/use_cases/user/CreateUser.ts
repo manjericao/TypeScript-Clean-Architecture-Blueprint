@@ -102,7 +102,6 @@ export class CreateUser extends BaseOperation<CreateUserEvents> {
       this.logger.info(`CreateUser succeeded: User created.`, { userId: createdUser.id });
       this.emitSuccess(createdUser);
     } catch (error) {
-      this.logger.error(`CreateUser failed unexpectedly.`, { email: userDTO.email, error });
       const err = error instanceof Error ? error : new Error(String(error));
       this.emitError(
         new OperationError('CREATE_USER_FAILED', `Failed to create user: ${err.message}`, err)
