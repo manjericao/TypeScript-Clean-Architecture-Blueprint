@@ -1,5 +1,6 @@
 import { Expose } from 'class-transformer';
 import { IsInt, IsNotEmpty, Max, Min } from 'class-validator';
+
 import { BaseDTO } from '@enterprise/dto/input/base';
 
 /**

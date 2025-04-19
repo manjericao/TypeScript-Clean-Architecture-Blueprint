@@ -1,122 +1,203 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { GetAllUsers } from '../GetAllUsers';
-import { UserRole } from '@enterprise/enum/UserRole';
-import { IUserRepository } from '@application/contracts/domain/repositories/IUserRepository';
-import { PaginationDTO } from '@enterprise/dto/output/PaginationDTO';
-import { UserResponseDTO } from '@enterprise/dto/output/UserResponseDTO';
+import { faker } from '@faker-js/faker';
+import { GetAllUsers } from '@application/use_cases/user';
+import { IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { GetAllUsersInputDTO } from '@enterprise/dto/input/user';
+import { UserResponseDTO, PaginationDTO } from '@enterprise/dto/output';
+import { OperationError } from '@application/use_cases/base';
+import { UserRole } from '@enterprise/enum';
 
-describe('GetAllUsers Operation', () => {
-  let mockUserRepository: jest.Mocked<IUserRepository>;
+const mockUserRepository: jest.Mocked<IUserRepository> = {
+  findAll: jest.fn(),
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  findByUsername: jest.fn(),
+  findByEmailWithPassword: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
+
+const mockLogger: jest.Mocked<ILogger> = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+describe('GetAllUsers Use Case', () => {
   let getAllUsers: GetAllUsers;
 
-  const mockUsers: UserResponseDTO[] = [
-    {
-      id: '1',
-      username: 'johndoe',
-      name: 'John Doe',
-      email: 'john@example.com',
-      role: UserRole.USER,
-      isVerified: true
-    },
-    {
-      id: '2',
-      username: 'janesmith',
-      name: 'Jane Smith',
-      email: 'jane@example.com',
-      role: UserRole.ADMIN,
-      isVerified: true
-    }
-  ];
-
-  const mockPaginationData: PaginationDTO<UserResponseDTO> = {
-    body: mockUsers,
-    total: 2,
-    page: 1,
-    limit: 10,
-    last_page: 1
-  };
-
   beforeEach(() => {
-    mockUserRepository = {
-      findAll: jest.fn(),
-      create: jest.fn(),
-      findByEmail: jest.fn(),
-      findByUsername: jest.fn(),
-      findById: jest.fn(),
-      findByEmailWithPassword: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn()
-    };
-
-    getAllUsers = new GetAllUsers(mockUserRepository);
+    jest.clearAllMocks();
+    getAllUsers = new GetAllUsers(mockUserRepository, mockLogger);
   });
 
+  const createFakeUserResponse = (): UserResponseDTO => ({
+    id: faker.string.uuid(),
+    username: faker.internet.username(),
+    name: faker.person.fullName(),
+    email: faker.internet.email(),
+    role: faker.helpers.arrayElement(Object.values(UserRole)),
+    isVerified: faker.datatype.boolean(),
+  });
+
+  const createFakePaginationResponse = (
+    page: number,
+    limit: number,
+    totalItems?: number
+  ): PaginationDTO<UserResponseDTO> => {
+    const items = Array.from({ length: Math.min(limit, totalItems ?? limit) }, createFakeUserResponse);
+    const total = totalItems ?? items.length + (page > 1 ? limit : 0);
+    const lastPage = Math.ceil(total / limit);
+    return {
+      body: items,
+      total: total,
+      page: page,
+      limit: limit,
+      last_page: lastPage,
+    };
+  };
+
   describe('execute', () => {
-    it('should emit SUCCESS with paginated users when repository call succeeds', async () => {
+    it('should call UserRepository.findAll with correct page and limit', async () => {
       // Arrange
+      const input: GetAllUsersInputDTO = { page: 1, limit: 10 };
+      const fakeResponse = createFakePaginationResponse(input.page, input.limit);
+      mockUserRepository.findAll.mockResolvedValueOnce(fakeResponse);
+
+      // Act
+      await getAllUsers.execute(input);
+
+      // Assert
+      expect(mockUserRepository.findAll).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findAll).toHaveBeenCalledWith(input.page, input.limit);
+    });
+
+    it('should emit SUCCESS with paginated user data when repository call is successful', async () => {
+      // Arrange
+      const input: GetAllUsersInputDTO = { page: faker.number.int({ min: 1, max: 5 }), limit: faker.number.int({ min: 5, max: 20 }) };
+      const expectedPaginationData = createFakePaginationResponse(input.page, input.limit, 50); // Simulate total > limit
+      mockUserRepository.findAll.mockResolvedValueOnce(expectedPaginationData);
+
       const successHandler = jest.fn();
       const errorHandler = jest.fn();
-      const page = 1;
-      const limit = 10;
-
-      mockUserRepository.findAll.mockResolvedValueOnce(mockPaginationData);
-
       getAllUsers.on('SUCCESS', successHandler);
       getAllUsers.on('ERROR', errorHandler);
 
       // Act
-      await getAllUsers.execute(page, limit);
+      await getAllUsers.execute(input);
 
       // Assert
-      expect(mockUserRepository.findAll).toHaveBeenCalledWith(page, limit);
-      expect(successHandler).toHaveBeenCalledWith(mockPaginationData); // Changed this line
+      expect(successHandler).toHaveBeenCalledTimes(1);
+      expect(successHandler).toHaveBeenCalledWith(expectedPaginationData);
       expect(errorHandler).not.toHaveBeenCalled();
     });
 
-    it('should emit ERROR with Error instance when repository throws Error', async () => {
+    it('should emit SUCCESS with empty pagination data when repository finds no users', async () => {
       // Arrange
+      const input: GetAllUsersInputDTO = { page: 1, limit: 10 };
+      const emptyPaginationData: PaginationDTO<UserResponseDTO> = {
+        body: [],
+        total: 0,
+        page: input.page,
+        limit: input.limit,
+        last_page: 1 // Or 0, depending on convention for no results
+      };
+      mockUserRepository.findAll.mockResolvedValueOnce(emptyPaginationData);
+
       const successHandler = jest.fn();
-      const errorHandler = jest.fn();
-      const testError = new Error('Database connection failed');
-      const page = 1;
-      const limit = 10;
-
-      mockUserRepository.findAll.mockRejectedValueOnce(testError);
-
       getAllUsers.on('SUCCESS', successHandler);
-      getAllUsers.on('ERROR', errorHandler);
 
       // Act
-      await getAllUsers.execute(page, limit);
+      await getAllUsers.execute(input);
 
       // Assert
-      expect(mockUserRepository.findAll).toHaveBeenCalledWith(page, limit);
-      expect(successHandler).not.toHaveBeenCalled();
-      expect(errorHandler).toHaveBeenCalledWith(testError);
-      expect(errorHandler.mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(successHandler).toHaveBeenCalledTimes(1);
+      expect(successHandler).toHaveBeenCalledWith(emptyPaginationData);
+      expect(mockUserRepository.findAll).toHaveBeenCalledWith(input.page, input.limit);
     });
 
-    it('should emit ERROR with converted Error when repository throws non-Error', async () => {
+
+    it('should emit ERROR when UserRepository.findAll rejects with an Error', async () => {
       // Arrange
+      const input: GetAllUsersInputDTO = { page: 1, limit: 15 };
+      const expectedError = new Error('Database connection lost');
+      mockUserRepository.findAll.mockRejectedValueOnce(expectedError);
+
       const successHandler = jest.fn();
       const errorHandler = jest.fn();
-      const nonErrorValue = 'String error message';
-      const page = 1;
-      const limit = 10;
-
-      mockUserRepository.findAll.mockRejectedValueOnce(nonErrorValue);
-
       getAllUsers.on('SUCCESS', successHandler);
       getAllUsers.on('ERROR', errorHandler);
 
       // Act
-      await getAllUsers.execute(page, limit);
+      await getAllUsers.execute(input);
 
       // Assert
-      expect(mockUserRepository.findAll).toHaveBeenCalledWith(page, limit);
+      expect(errorHandler).toHaveBeenCalledTimes(1);
       expect(successHandler).not.toHaveBeenCalled();
-      expect(errorHandler).toHaveBeenCalledWith(new Error(String(nonErrorValue)));
-      expect(errorHandler.mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(mockUserRepository.findAll).toHaveBeenCalledWith(input.page, input.limit);
+
+      // Check the emitted error details
+      const emittedError = errorHandler.mock.calls[0][0] as OperationError;
+      expect(emittedError).toBeInstanceOf(OperationError);
+      expect(emittedError.code).toBe('GET_USERS_ERROR');
+      expect(emittedError.message).toBe(expectedError.message);
+      expect(emittedError.details).toBe(expectedError); // Check if the original error is attached
+    });
+
+    it('should emit ERROR when UserRepository.findAll rejects with a non-Error value', async () => {
+      // Arrange
+      const input: GetAllUsersInputDTO = { page: 2, limit: 5 };
+      const rejectionValue = { message: 'Something weird happened', code: 500 };
+      mockUserRepository.findAll.mockRejectedValueOnce(rejectionValue);
+
+      const successHandler = jest.fn();
+      const errorHandler = jest.fn();
+      getAllUsers.on('SUCCESS', successHandler);
+      getAllUsers.on('ERROR', errorHandler);
+
+      // Act
+      await getAllUsers.execute(input);
+
+      // Assert
+      expect(errorHandler).toHaveBeenCalledTimes(1);
+      expect(successHandler).not.toHaveBeenCalled();
+      expect(mockUserRepository.findAll).toHaveBeenCalledWith(input.page, input.limit);
+
+      // Check the emitted error details
+      const emittedError = errorHandler.mock.calls[0][0] as OperationError;
+      expect(emittedError).toBeInstanceOf(OperationError);
+      expect(emittedError.code).toBe('GET_USERS_ERROR');
+      expect(emittedError.message).toBe('Unknown error occurred'); // Uses default message for non-Errors
+      expect(emittedError.details).toBe(rejectionValue); // Check if the original value is attached
+    });
+
+    it('should log error details when an error occurs', async () => {
+      // Arrange
+      const input: GetAllUsersInputDTO = { page: 1, limit: 10 };
+      const expectedError = new Error('Logging test error');
+      mockUserRepository.findAll.mockRejectedValueOnce(expectedError);
+
+      const errorHandler = jest.fn();
+      getAllUsers.on('ERROR', errorHandler); // Need to attach listener even if not asserting it directly
+
+      // Act
+      await getAllUsers.execute(input);
+
+      // Assert
+      // BaseOperation automatically logs errors when emitError is called if a logger is provided
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('OperationError: GET_USERS_ERROR'), // Check for error code in log
+        expect.objectContaining({ // Check for context/metadata
+          errorCode: 'GET_USERS_ERROR',
+          errorMessage: expectedError.message,
+          errorStack: expect.any(String), // Stack trace might be included
+          originalError: expectedError
+        })
+      );
     });
   });
 });
