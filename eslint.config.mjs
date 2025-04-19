@@ -26,10 +26,33 @@ export default [
       'jest': jestPlugin,
       'import': importPlugin,
     },
+    settings: {
+      'import/resolver': {
+        typescript: {
+          project: './tsconfig.json',
+        },
+      },
+    },
     rules: {
       ...tsPlugin.configs['recommended'].rules,
       ...tsPlugin.configs['recommended-requiring-type-checking'].rules,
-      // Add any custom rules here
+      ...importPlugin.configs.typescript.rules,
+      'prettier/prettier': 'warn',
+      'import/order': [
+        'warn',
+        {
+          groups: ['builtin', 'external', 'internal', ['parent', 'sibling', 'index']],
+          'newlines-between': 'always',
+          alphabetize: { order: 'asc', caseInsensitive: true },
+          pathGroups: [
+            { pattern: '@enterprise/**', group: 'internal' },
+            { pattern: '@infrastructure/**', group: 'internal' },
+            { pattern: '@application/**', group: 'internal' },
+            { pattern: '@interface/**', group: 'internal' },
+          ],
+          pathGroupsExcludedImportTypes: ['builtin'],
+        },
+      ],
     },
     files: ['**/*.ts']
   },
