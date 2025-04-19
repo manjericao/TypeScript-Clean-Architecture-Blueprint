@@ -1,16 +1,13 @@
+import { ILogger } from '@application/contracts/infrastructure';
 import { AbstractOperation } from '@application/use_cases/base/AbstractOperation';
 import { BaseOperationEvents, OperationError } from '@application/use_cases/base/OperationTypes';
-import { ILogger } from '@application/contracts/infrastructure';
 
 export abstract class BaseOperation<
   TEventMap extends BaseOperationEvents<unknown>
 > extends AbstractOperation<TEventMap> {
   protected readonly logger: ILogger;
 
-  protected constructor(
-    eventNames: Array<keyof TEventMap>,
-    logger: ILogger
-  ) {
+  protected constructor(eventNames: Array<keyof TEventMap>, logger: ILogger) {
     super(eventNames);
     this.logger = logger;
   }

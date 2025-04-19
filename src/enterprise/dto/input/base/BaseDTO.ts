@@ -1,4 +1,5 @@
 import { ClassConstructor } from 'class-transformer';
+
 import { DTOValidationError } from '@enterprise/dto/errors';
 
 /**

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+
 import { DomainEvent } from '@enterprise/events/base';
 
 export abstract class AbstractOperation<EventMap> {
@@ -9,13 +10,15 @@ export abstract class AbstractOperation<EventMap> {
     this.outputs = AbstractOperation.createOutputs<EventMap>(eventNames);
   }
 
-  private static createOutputs<T>(eventNames: Array<keyof T>): Map<keyof T, Array<(event: T[keyof T]) => void>> {
-    return new Map(eventNames.map(name => [name, []]));
+  private static createOutputs<T>(
+    eventNames: Array<keyof T>
+  ): Map<keyof T, Array<(event: T[keyof T]) => void>> {
+    return new Map(eventNames.map((name) => [name, []]));
   }
 
   protected emitOutput<K extends keyof EventMap>(eventName: K, event: EventMap[K]): boolean {
     const handlers = this.outputs.get(eventName) || [];
-    handlers.forEach(handler => handler(event));
+    handlers.forEach((handler) => handler(event));
     return handlers.length > 0;
   }
 
@@ -38,7 +41,7 @@ export abstract class AbstractOperation<EventMap> {
   }
 
   onTyped<K extends keyof EventMap>(eventName: K): Promise<EventMap[K]> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       this.on(eventName, resolve);
     });
   }
