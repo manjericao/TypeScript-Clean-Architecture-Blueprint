@@ -1,72 +1,81 @@
-import { Operation } from '@application/use_cases/base';
-import { UserResponseDTO } from '@enterprise/dto/output';
 import { IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { BaseOperation, BaseOperationEvents, OperationError } from '@application/use_cases/base';
+import { GetUserInputDTO } from '@enterprise/dto/input/user'; // Import the new DTO
+import { UserResponseDTO } from '@enterprise/dto/output';
 
 /**
- * Represents the structure for user-related event responses.
- * This interface is used to handle different outcomes for a user-specific event,
- * including success, error, and not found scenarios.
- *
- * @interface GetUserEvents
- * @extends {Record<string, unknown>}
- *
- * @property {UserResponseDTO} SUCCESS - Represents the successful outcome of the event,
- * containing the user-specific data transfer object.
- *
- * @property {Error} ERROR - Represents a generic error outcome for the event.
- *
- * @property {string} NOTFOUND_ERROR - Represents a specific error outcome indicating
- * that the requested user was not found.
+ * Defines the events specific to the GetUser operation.
+ * Extends BaseOperationEvents to include standard SUCCESS and ERROR,
+ * plus a NOTFOUND_ERROR for cases where the user isn't found.
+ * - SUCCESS: Emitted with the UserResponseDTO of the found user.
+ * - ERROR: Emitted with an OperationError for unexpected issues.
+ * - NOTFOUND_ERROR: Emitted with a string message when the user is not found.
  */
-interface GetUserEvents extends Record<string, unknown> {
-  SUCCESS: UserResponseDTO;
-  ERROR: Error;
+type GetUserEvents = BaseOperationEvents<UserResponseDTO> & {
   NOTFOUND_ERROR: string;
-}
+};
 
 /**
- * Class responsible for retrieving user information based on an identifier or email.
- * Emits appropriate events depending on the outcome of the operation.
- *
- * Inherits from a generic Operation class.
+ * Represents the use case for retrieving a single user by ID or email.
+ * Extends BaseOperation to leverage-shared event handling and logging logic.
  */
-export class GetUser extends Operation<GetUserEvents> {
+export class GetUser extends BaseOperation<GetUserEvents> {
   /**
-   * @param UserRepository Repository dependencies
+   * Constructs the GetUser use case.
+   * @param {IUserRepository} userRepository - The repository for user data access.
+   * @param {ILogger} logger - The logger instance for logging messages.
    */
-  constructor(private UserRepository: IUserRepository) {
-    super(['SUCCESS', 'ERROR', 'NOTFOUND_ERROR']);
+  constructor(
+    private readonly userRepository: IUserRepository,
+    readonly logger: ILogger
+  ) {
+    // Initialize BaseOperation with the defined event names and logger
+    super(['SUCCESS', 'ERROR', 'NOTFOUND_ERROR'], logger);
   }
 
   /**
-   * Executes a user lookup based on the provided id or email.
-   * Emits success or error events based on the operation result.
+   * Executes the process to find a user by ID or email.
+   * It prioritizes finding by ID if provided, otherwise falls back to email.
+   * Emits appropriate events based on the outcome (SUCCESS, NOTFOUND_ERROR, ERROR).
    *
-   * @param {string} id - The unique identifier of the user to look up.
-   * @param {string} email - The email address of the user to look up.
-   * @return {Promise<void>} - A promise that resolves when the operation completes.
+   * @param {GetUserInputDTO} input - The input DTO containing the user's id or email.
+   * @returns {Promise<void>} A promise that resolves when the operation is complete.
    */
-  async execute(id: string, email: string): Promise<void> {
-    const { SUCCESS, ERROR, NOTFOUND_ERROR } = this.outputs;
+  async execute(input: GetUserInputDTO): Promise<void> {
+    this.logger.info(`GetUser operation started`, { input });
+
     try {
-      let user: UserResponseDTO | undefined;
+      let user: UserResponseDTO | undefined | null;
 
-      if (id) {
-        user = await this.UserRepository.findById(id);
+      // Prioritize ID if provided
+      if (input.id) {
+        this.logger.info(`Attempting to find user by ID: ${input.id}`);
+        user = await this.userRepository.findById(input.id);
       }
 
-      if (!user && email) {
-        user = await this.UserRepository.findByEmail(email);
+      // If not found by ID (or ID wasn't provided) and email is provided, try email
+      if (!user && input.email) {
+        this.logger.info(`Attempting to find user by email: ${input.email}`);
+        user = await this.userRepository.findByEmail(input.email);
       }
 
-      if (!user || (Object.keys(user).length === 0 && user.constructor === Object)) {
-        this.emitOutput(NOTFOUND_ERROR, 'User was not found');
+      if (!user) {
+        const criteria = input.id ? `ID ${input.id}` : `email ${input.email}`;
+        const message = `User not found with the provided criteria: ${criteria}.`;
+        this.logger.warn!(`GetUser failed: ${message}`, { input });
+        this.emitOutput('NOTFOUND_ERROR', message);
         return;
       }
 
-      this.emitOutput(SUCCESS, user);
+      this.logger.info(`GetUser succeeded: User found.`, { userId: user.id });
+      this.emitSuccess(user);
     } catch (error) {
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      this.logger.error(`GetUser failed unexpectedly.`, { input, error });
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(
+        new OperationError('GET_USER_FAILED', `Failed to retrieve user: ${err.message}`, err)
+      );
     }
   }
 }
