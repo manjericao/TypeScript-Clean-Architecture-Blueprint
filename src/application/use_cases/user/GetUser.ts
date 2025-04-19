@@ -61,7 +61,17 @@ export class GetUser extends BaseOperation<GetUserEvents> {
       }
 
       if (!user) {
-        const criteria = input.id ? `ID ${input.id}` : `email ${input.email}`;
+        let criteria: string;
+        if (input.id && input.email) {
+          criteria = `ID ${input.id} or email ${input.email}`;
+        } else if (input.id) {
+          criteria = `ID ${input.id}`;
+        } else if (input.email) {
+          criteria = `email ${input.email}`;
+        } else {
+          criteria = 'no valid criteria specified';
+        }
+
         const message = `User not found with the provided criteria: ${criteria}.`;
         this.logger.warn!(`GetUser failed: ${message}`, { input });
         this.emitOutput('NOTFOUND_ERROR', message);
@@ -71,7 +81,6 @@ export class GetUser extends BaseOperation<GetUserEvents> {
       this.logger.info(`GetUser succeeded: User found.`, { userId: user.id });
       this.emitSuccess(user);
     } catch (error) {
-      this.logger.error(`GetUser failed unexpectedly.`, { input, error });
       const err = error instanceof Error ? error : new Error(String(error));
       this.emitError(
         new OperationError('GET_USER_FAILED', `Failed to retrieve user: ${err.message}`, err)

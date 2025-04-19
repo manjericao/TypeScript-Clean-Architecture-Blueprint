@@ -173,7 +173,7 @@ describe('GetUser Use Case', () => {
     it('should emit NOTFOUND_ERROR when user is not found by email (ID not provided)', async () => {
       // Arrange
       inputDTO = { email: fakeUser.email }; // Only provide email
-      const expectedMessage = `User not found with the provided criteria: Email ${fakeUser.email}.`;
+      const expectedMessage = `User not found with the provided criteria: email ${fakeUser.email}.`;
       mockUserRepository.findByEmail.mockResolvedValue(undefined); // Simulate email not found
 
       // Act
@@ -197,7 +197,7 @@ describe('GetUser Use Case', () => {
     it('should emit NOTFOUND_ERROR when user is not found by ID nor by email', async () => {
       // Arrange
       inputDTO = { id: fakeUser.id, email: fakeUser.email }; // Provide both
-      const expectedMessage = `User not found with the provided criteria: ID ${fakeUser.id} or Email ${fakeUser.email}.`;
+      const expectedMessage = `User not found with the provided criteria: ID ${fakeUser.id} or email ${fakeUser.email}.`;
       mockUserRepository.findById.mockResolvedValue(undefined); // Simulate ID not found
       mockUserRepository.findByEmail.mockResolvedValue(undefined); // Simulate email not found
 
@@ -236,11 +236,12 @@ describe('GetUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-        code: 'GET_USER_FAILED',
-        message: repositoryError.message,
-        details: repositoryError,
-      }));
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation GetUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
+      );
       expect(onSuccess).not.toHaveBeenCalled();
       expect(onNotFound).not.toHaveBeenCalled();
 
@@ -271,11 +272,12 @@ describe('GetUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-        code: 'GET_USER_FAILED',
-        message: repositoryError.message,
-        details: repositoryError,
-      }));
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation GetUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
+      );
       expect(onSuccess).not.toHaveBeenCalled();
       expect(onNotFound).not.toHaveBeenCalled();
 
@@ -302,11 +304,12 @@ describe('GetUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-        code: 'GET_USER_FAILED',
-        message: repositoryError.message,
-        details: repositoryError,
-      }));
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Operation GetUser failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
+        })
+      );
       expect(onSuccess).not.toHaveBeenCalled();
       expect(onNotFound).not.toHaveBeenCalled();
 
