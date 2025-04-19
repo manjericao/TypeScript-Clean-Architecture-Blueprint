@@ -1,60 +1,75 @@
-import { Operation } from '@application/use_cases/base';
-import { UserDeletedEvent } from '@enterprise/events/user';
 import { IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { BaseOperation, BaseOperationEvents, OperationError } from '@application/use_cases/base';
+import { IdUserDTO } from '@enterprise/dto/input/user';
+import { UserResponseDTO } from '@enterprise/dto/output';
+import { UserDeletedEvent } from '@enterprise/events/user';
 
 /**
- * Interface representing a collection of events related to deleting a user.
- * Extends the Record type with a string key and unknown value.
- *
- * @interface DeleteUserEvents
- * @property {string} SUCCESS - Indicates a successful user deletion event.
- * @property {Error} ERROR - Represents a general error that occurred during the deletion process.
- * @property {string} NOTFOUND_ERROR - Specifies an error when the user to be deleted is not found.
- * @property {string} VALIDATION_ERROR - Represents an error due to validation failure during the deletion process.
+ * Extends the standard BaseOperationEvents using a type alias to include
+ * specific error scenarios for the DeleteUser operation.
+ * - SUCCESS: Emitted on successful deletion (payload: success message string).
+ * - ERROR: Emitted for unexpected errors (payload: OperationError).
+ * - NOTFOUND_ERROR: Emitted when the user to be deleted is not found (payload: error message string).
+ * - VALIDATION_ERROR: Emitted when the input ID is invalid (payload: error message string).
  */
-interface DeleteUserEvents extends Record<string, unknown> {
-  SUCCESS: string;
-  ERROR: Error;
+type DeleteUserEvents = BaseOperationEvents<string> & {
   NOTFOUND_ERROR: string;
-  VALIDATION_ERROR: string;
-}
+};
 
 /**
- * Operation to delete a user
+ * Represents an operation to delete a user.
+ * This class is responsible for handling the deletion logic including validation,
+ * user retrieval, event publishing, and logging related to the operation.
+ * If the operation encounters a failure, appropriate events or errors will be emitted.
+ *
+ * Extends the `BaseOperation` class, which provides support for event handling and error management.
+ *
+ * Events emitted by this operation:
+ * - SUCCESS: Indicates successful completion of the user deletion.
+ * - ERROR: Indicates a general error occurred during the operation.
+ * - NOTFOUND_ERROR: Emitted when the specified user ID does not exist.
+ * - VALIDATION_ERROR: Emitted when input validation fails, such as when the user ID is missing.
  */
-export class DeleteUser extends Operation<DeleteUserEvents> {
-  constructor(private UserRepository: IUserRepository) {
-    super(['SUCCESS', 'ERROR', 'NOTFOUND_ERROR', 'VALIDATION_ERROR']);
+export class DeleteUser extends BaseOperation<DeleteUserEvents> {
+  constructor(
+    private readonly userRepository: IUserRepository,
+    readonly logger: ILogger
+  ) {
+    super(['SUCCESS', 'ERROR', 'NOTFOUND_ERROR'], logger);
   }
 
   /**
-   * Executes the deletion process for a user with the specified ID.
+   * Executes the user deletion process.
    *
-   * @param {string} id - The unique identifier of the user to be deleted.
-   * @return {Promise<void>} A promise that resolves when the operation is complete.
+   * @param {IdUserDTO} userId - The DTO containing the ID of the user to be deleted.
+   * @return {Promise<void>} A promise that resolves when the user deletion process is complete.
    */
-  async execute(id: string): Promise<void> {
-    const { SUCCESS, ERROR, NOTFOUND_ERROR, VALIDATION_ERROR } = this.outputs;
-
+  async execute(userId: IdUserDTO): Promise<void> {
     try {
-      if (!id) {
-        this.emitOutput(VALIDATION_ERROR, 'User ID is required');
-        return;
-      }
-
-      const userToBeDeleted = await this.UserRepository.findById(id);
+      const userToBeDeleted: UserResponseDTO | undefined = await this.userRepository.findById(
+        userId.id
+      );
 
       if (!userToBeDeleted || !userToBeDeleted.id) {
-        this.emitOutput(NOTFOUND_ERROR, `User with id of ${id} was not found`);
+        const message = `User with id ${userId.id} was not found.`;
+        this.logger.warn!(`DeleteUser failed: User not found.`, { userId: userId.id });
+
+        this.emitOutput('NOTFOUND_ERROR', message);
         return;
       }
 
       this.publishDomainEvent(new UserDeletedEvent(userToBeDeleted.id));
+      this.logger.info(`Published UserDeletedEvent for user ${userId.id}.`);
 
-      await this.UserRepository.delete(userToBeDeleted.id);
-      this.emitOutput(SUCCESS, 'Deletion was successful');
+      await this.userRepository.delete(userToBeDeleted.id);
+      this.logger.info(`Successfully deleted user ${userId.id} from repository.`);
+
+      const successMessage = `User with id ${userId.id} was successfully deleted.`;
+      this.emitSuccess(successMessage);
     } catch (error) {
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(new OperationError('DELETE_USER_FAILED', err.message, err));
     }
   }
 }

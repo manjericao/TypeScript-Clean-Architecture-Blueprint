@@ -1,7 +1,8 @@
 import { Expose, Transform } from 'class-transformer';
 import { IsEmail, IsEnum, IsOptional, Matches, IsBoolean } from 'class-validator';
-import { UserRole, Gender } from '@enterprise/enum';
+
 import { BaseDTO } from '@enterprise/dto/input/base';
+import { UserRole, Gender } from '@enterprise/enum';
 
 /**
  * UpdateUserDTO is an input data transfer object used for validating and transforming
@@ -29,12 +30,10 @@ export class UpdateUserDTO extends BaseDTO {
 
   @Expose()
   @IsOptional()
-  @Matches(
-    /^(?=.*\d)(?=.*[A-Z])(?=.*[a-z])(?=.*[!@#$%^&*])[\w!@#$%^&*]{8,}$/,
-    {
-      message: 'Password must be at least 8 characters and include uppercase, lowercase, number and special character'
-    }
-  )
+  @Matches(/^(?=.*\d)(?=.*[A-Z])(?=.*[a-z])(?=.*[!@#$%^&*])[\w!@#$%^&*]{8,}$/, {
+    message:
+      'Password must be at least 8 characters and include uppercase, lowercase, number and special character'
+  })
   password?: string;
 
   @Expose()
