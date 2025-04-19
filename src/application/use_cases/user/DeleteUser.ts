@@ -68,7 +68,6 @@ export class DeleteUser extends BaseOperation<DeleteUserEvents> {
       const successMessage = `User with id ${id} was successfully deleted.`;
       this.emitSuccess(successMessage);
     } catch (error) {
-      this.logger.error(`DeleteUser failed unexpectedly.`, { error });
       const err = error instanceof Error ? error : new Error(String(error));
       this.emitError(new OperationError('DELETE_USER_FAILED', err.message, err));
     }

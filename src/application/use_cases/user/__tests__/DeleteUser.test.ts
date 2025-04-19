@@ -81,8 +81,8 @@ describe('DeleteUser Use Case', () => {
       expect(mockUserRepository.delete).toHaveBeenCalledTimes(1);
       expect(mockUserRepository.delete).toHaveBeenCalledWith(fakeUser.id);
 
-      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Published UserDeletedEvent'), expect.any(Object));
-      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Successfully deleted user'), expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining(`Published UserDeletedEvent for user ${fakeUser.id}`));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining(`Successfully deleted user ${fakeUser.id} from repository.`));
       expect(mockLogger.warn).not.toHaveBeenCalled(); // No warnings expected
       expect(mockLogger.error).not.toHaveBeenCalled(); // No errors expected via logger in success path
 
@@ -233,8 +233,8 @@ describe('DeleteUser Use Case', () => {
       expect(mockUserRepository.delete).toHaveBeenCalledTimes(1);
       expect(mockUserRepository.delete).toHaveBeenCalledWith(fakeUser.id);
 
-      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Published UserDeletedEvent'), expect.any(Object)); // Event published before delete fails
-      expect(mockLogger.error).toHaveBeenCalledTimes(1); // BaseOperation handles logging on emitError
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining(`Published UserDeletedEvent for user ${fakeUser.id}`)); // Event published before delete fails
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Operation DeleteUser failed'),
         expect.objectContaining({
