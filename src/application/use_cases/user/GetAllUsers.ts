@@ -48,6 +48,7 @@ export class GetAllUsers extends BaseOperation<GetAllUsersEvents> {
       );
       this.emitSuccess(users);
     } catch (error) {
+      this.logger.error(`GetAllUsers failed unexpectedly.`, { error });
       this.emitError(
         new OperationError(
           'GET_USERS_ERROR',

@@ -1,7 +1,7 @@
 import { IUserRepository } from '@application/contracts/domain/repositories';
 import { ILogger } from '@application/contracts/infrastructure';
 import { BaseOperation, BaseOperationEvents, OperationError } from '@application/use_cases/base';
-import { IdUserDTO } from '@enterprise/dto/input/user';
+import { GetUserInputDTO } from '@enterprise/dto/input/user';
 import { UserResponseDTO } from '@enterprise/dto/output';
 import { UserDeletedEvent } from '@enterprise/events/user';
 
@@ -42,32 +42,33 @@ export class DeleteUser extends BaseOperation<DeleteUserEvents> {
   /**
    * Executes the user deletion process.
    *
-   * @param {IdUserDTO} userId - The DTO containing the ID of the user to be deleted.
+   * @param {GetUserInputDTO} input - The DTO containing the ID of the user to be deleted.
    * @return {Promise<void>} A promise that resolves when the user deletion process is complete.
    */
-  async execute(userId: IdUserDTO): Promise<void> {
+  async execute(input: GetUserInputDTO): Promise<void> {
     try {
-      const userToBeDeleted: UserResponseDTO | undefined = await this.userRepository.findById(
-        userId.id
-      );
+      const id = input.id!;
+
+      const userToBeDeleted: UserResponseDTO | undefined = await this.userRepository.findById(id);
 
       if (!userToBeDeleted || !userToBeDeleted.id) {
-        const message = `User with id ${userId.id} was not found.`;
-        this.logger.warn!(`DeleteUser failed: User not found.`, { userId: userId.id });
+        const message = `User with id ${id} was not found.`;
+        this.logger.warn!(`DeleteUser failed: User not found.`, { userId: id });
 
         this.emitOutput('NOTFOUND_ERROR', message);
         return;
       }
 
       this.publishDomainEvent(new UserDeletedEvent(userToBeDeleted.id));
-      this.logger.info(`Published UserDeletedEvent for user ${userId.id}.`);
+      this.logger.info(`Published UserDeletedEvent for user ${id}.`);
 
       await this.userRepository.delete(userToBeDeleted.id);
-      this.logger.info(`Successfully deleted user ${userId.id} from repository.`);
+      this.logger.info(`Successfully deleted user ${id} from repository.`);
 
-      const successMessage = `User with id ${userId.id} was successfully deleted.`;
+      const successMessage = `User with id ${id} was successfully deleted.`;
       this.emitSuccess(successMessage);
     } catch (error) {
+      this.logger.error(`DeleteUser failed unexpectedly.`, { error });
       const err = error instanceof Error ? error : new Error(String(error));
       this.emitError(new OperationError('DELETE_USER_FAILED', err.message, err));
     }

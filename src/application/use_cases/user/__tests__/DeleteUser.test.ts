@@ -3,7 +3,7 @@ import { faker } from '@faker-js/faker';
 
 import { IUserRepository } from '@application/contracts/domain/repositories';
 import { ILogger } from '@application/contracts/infrastructure';
-import { IdUserDTO } from '@enterprise/dto/input/user';
+import { GetUserInputDTO } from '@enterprise/dto/input/user';
 import { UserResponseDTO } from '@enterprise/dto/output';
 import { AbstractOperation, OperationError } from '@application/use_cases/base';
 import { UserRole } from '@enterprise/enum';
@@ -40,7 +40,7 @@ const createFakeUserResponseDTO = (id?: string): UserResponseDTO => ({
 
 describe('DeleteUser Use Case', () => {
   let deleteUser: DeleteUser;
-  let userIdDTO: IdUserDTO;
+  let userIdDTO: GetUserInputDTO;
   let fakeUser: UserResponseDTO;
 
   const publishDomainEventSpy = jest.spyOn(AbstractOperation.prototype as any, 'publishDomainEvent');
