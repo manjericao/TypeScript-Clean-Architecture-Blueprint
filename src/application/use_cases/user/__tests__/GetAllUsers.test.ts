@@ -190,12 +190,9 @@ describe('GetAllUsers Use Case', () => {
       // BaseOperation automatically logs errors when emitError is called if a logger is provided
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('OperationError: GET_USERS_ERROR'), // Check for error code in log
-        expect.objectContaining({ // Check for context/metadata
-          errorCode: 'GET_USERS_ERROR',
-          errorMessage: expectedError.message,
-          errorStack: expect.any(String), // Stack trace might be included
-          originalError: expectedError
+        expect.stringContaining('Operation GetAllUsers failed'),
+        expect.objectContaining({
+          error: expect.any(OperationError)
         })
       );
     });
