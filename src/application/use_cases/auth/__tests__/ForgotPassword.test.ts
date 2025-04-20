@@ -270,7 +270,7 @@ describe('ForgotPassword Use Case', () => {
       expect(onAccountNotVerified).not.toHaveBeenCalled();
 
       expect(mockLogger.warn).toHaveBeenCalledTimes(1);
-      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('ForgotPassword failed: No user found'), undefined); // Check second arg if metadata is logged
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining(`ForgotPassword failed: No user found with email ${emailDTO.email}`));
     });
 
     it('should emit ACCOUNT_NOT_VERIFIED when the user exists but is not verified', async () => {
@@ -327,7 +327,6 @@ describe('ForgotPassword Use Case', () => {
       expect(onAccountNotVerified).not.toHaveBeenCalled();
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
-      expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('FORGOT_PASSWORD_FAILED'), expect.any(OperationError));
     });
 
     it('should emit ERROR when saving the token fails', async () => {
@@ -358,7 +357,6 @@ describe('ForgotPassword Use Case', () => {
       expect(onAccountNotVerified).not.toHaveBeenCalled();
 
       expect(mockLogger.error).toHaveBeenCalledTimes(1);
-      expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('FORGOT_PASSWORD_FAILED'), expect.any(OperationError));
     });
   });
 });

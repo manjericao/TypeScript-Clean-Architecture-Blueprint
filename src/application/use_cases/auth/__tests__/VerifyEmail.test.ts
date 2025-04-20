@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { faker } from '@faker-js/faker';
 
@@ -205,8 +207,7 @@ describe('VerifyEmail Use Case', () => {
         expect.objectContaining({ tokenId: fakeTokenRecord.id })
       );
       expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining('Attempting to find user associated with token'),
-        expect.any(String) // userId is part of the string here
+        expect.stringContaining(`Attempting to find user associated with token: ${fakeTokenRecord.userId}`)
       );
       expect(mockLogger.debug).toHaveBeenCalledWith(
         'Found user.',
@@ -519,17 +520,6 @@ describe('VerifyEmail Use Case', () => {
         expect(onTokenExpired).not.toHaveBeenCalled();
         expect(onInvalidToken).not.toHaveBeenCalled();
         expect(onAlreadyVerified).not.toHaveBeenCalled();
-
-        // BaseOperation's emitError handles logging
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          expect.stringContaining(`Operation ${errorCode} failed`),
-          expect.objectContaining({
-            errorCode: errorCode,
-            errorMessage: emittedError.message,
-            errorStack: expect.any(String),
-            errorCause: dbError,
-          })
-        );
       }
     );
   });

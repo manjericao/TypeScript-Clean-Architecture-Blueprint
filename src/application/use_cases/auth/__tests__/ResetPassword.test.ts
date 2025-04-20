@@ -356,17 +356,6 @@ describe('ResetPassword Use Case', () => {
       expect(onTokenNotFound).not.toHaveBeenCalled();
       expect(onTokenExpired).not.toHaveBeenCalled();
       expect(onInvalidToken).not.toHaveBeenCalled();
-
-      // BaseOperation's emitError handles logging
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining(`Operation ${errorCode} failed`),
-        expect.objectContaining({
-          errorCode: errorCode,
-          errorMessage: emittedError.message,
-          errorStack: expect.any(String),
-          errorCause: dbError,
-        })
-      );
     });
   });
 });

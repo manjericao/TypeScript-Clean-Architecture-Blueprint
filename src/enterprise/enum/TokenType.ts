@@ -5,11 +5,11 @@
  * throughout the application.
  */
 export enum TokenType {
-  /** Used for API access authentication with short expiration time */
+  /** Used for API access authentication with a short expiration time */
   ACCESS = 'ACCESS',
-  /** Used for generating new access tokens with longer expiration time */
+  /** Used for generating new access tokens with a longer expiration time */
   REFRESH = 'REFRESH',
-  /** Used for email verification process */
+  /** Used for an email verification process */
   VERIFICATION = 'VERIFICATION',
   /** Used in password reset flow with time-limited validity */
   RESET_PASSWORD = 'RESET_PASSWORD'

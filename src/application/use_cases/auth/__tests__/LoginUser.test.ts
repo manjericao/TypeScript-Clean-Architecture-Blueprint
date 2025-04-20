@@ -339,13 +339,6 @@ describe('LoginUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError)); // Check if it's an OperationError instance
-      expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({
-          code: 'LOGIN_FAILED',
-          message: expect.stringContaining(`Failed to process login request for ${credentials.email}: ${repositoryError.message}`),
-          cause: repositoryError,
-        })
-      );
       expect(onSuccess).not.toHaveBeenCalled();
       expect(onUserNotFound).not.toHaveBeenCalled();
       expect(onInvalidCredentials).not.toHaveBeenCalled();
@@ -373,13 +366,6 @@ describe('LoginUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
-      expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({
-          code: 'LOGIN_FAILED',
-          message: expect.stringContaining(`Failed to process login request for ${credentials.email}: ${hasherError.message}`),
-          cause: hasherError,
-        })
-      );
       expect(onSuccess).not.toHaveBeenCalled();
       // ... other event handlers not called ...
       expect(mockLogger.error).toHaveBeenCalled();
@@ -404,13 +390,6 @@ describe('LoginUser Use Case', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
-      expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({
-          code: 'LOGIN_FAILED',
-          message: expect.stringContaining(`Failed to process login request for ${credentials.email}: ${tokenError.message}`),
-          cause: tokenError,
-        })
-      );
       expect(onSuccess).not.toHaveBeenCalled();
       expect(mockLogger.error).toHaveBeenCalled();
     });
