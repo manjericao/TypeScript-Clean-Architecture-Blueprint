@@ -12,7 +12,11 @@ export interface IJWTTokenGenerator {
    * @param {number} expiresInMinutes - The expiration time of the token in minutes.
    * @return {string} The generated JWT as a string.
    */
-  generateJWTToken(payload: Record<string, unknown>, type: TokenType, expiresInMinutes: number): string;
+  generateJWTToken(
+    payload: Record<string, unknown>,
+    type: TokenType,
+    expiresInMinutes: number
+  ): string;
 
   /**
    * Validates a given JSON Web Token (JWT) based on its type.
@@ -22,5 +26,8 @@ export interface IJWTTokenGenerator {
    * @return {Promise<{ valid: boolean; payload?: Record<string, unknown> }>} A promise that resolves to an object indicating whether the token is valid,
    * and an optional payload if the token is valid.
    */
-  validateJWTToken(token: string, type: TokenType): Promise<{ valid: boolean; payload?: Record<string, unknown> }>;
+  validateJWTToken(
+    token: string,
+    type: TokenType
+  ): Promise<{ valid: boolean; payload?: Record<string, unknown> }>;
 }

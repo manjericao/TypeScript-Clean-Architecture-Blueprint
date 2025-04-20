@@ -19,7 +19,7 @@ type DeleteUserEvents = BaseOperationEvents<string> & {
 
 /**
  * Represents an operation to delete a user.
- * This class is responsible for handling the deletion logic including validation,
+ * This class is responsible for handling the deletion logic, including validation,
  * user retrieval, event publishing, and logging related to the operation.
  * If the operation encounters a failure, appropriate events or errors will be emitted.
  *

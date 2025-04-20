@@ -1,5 +1,6 @@
-import { IsEmail, IsNotEmpty, IsEnum, IsOptional, IsBoolean, IsDate } from 'class-validator';
 import { Exclude, Expose } from 'class-transformer';
+import { IsEmail, IsNotEmpty, IsEnum, IsOptional, IsBoolean, IsDate } from 'class-validator';
+
 import { UserRole, Gender } from '@enterprise/enum';
 
 export interface IUser {

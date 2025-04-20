@@ -12,7 +12,6 @@ export class DTOValidationError extends Error {
     super('Validation failed');
     this.name = 'DTOValidationError';
 
-    // This is necessary in TypeScript to maintain proper prototype chain
     Object.setPrototypeOf(this, DTOValidationError.prototype);
   }
 

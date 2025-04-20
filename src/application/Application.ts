@@ -1,7 +1,10 @@
-import { IDatabase } from '@application/contracts/infrastructure/database/IDatabase';
-import { ILogger } from '@application/contracts/infrastructure/logging/ILogger';
-import { IServer } from '@application/contracts/infrastructure/server/IServer';
+import { ILogger, IDatabase, IServer } from '@application/contracts/infrastructure';
 
+/**
+ * Application class is responsible for managing the lifecycle of the application,
+ * including initializing and starting the necessary parts such as databases and server.
+ * It uses a logger to record operational events.
+ */
 export class Application {
   constructor(
     private readonly logger: ILogger,
@@ -14,7 +17,7 @@ export class Application {
       this.logger.info('Starting application...');
 
       this.logger.info('Connecting to databases...');
-      await Promise.all(this.databases.map(db => db.connect()));
+      await Promise.all(this.databases.map((db) => db.connect()));
       this.logger.info('Database connections established');
 
       this.logger.info('Starting server...');

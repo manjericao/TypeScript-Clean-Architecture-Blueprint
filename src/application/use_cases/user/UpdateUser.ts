@@ -56,7 +56,7 @@ export class UpdateUser extends BaseOperation<UpdateUserEvents> {
       const existingUser = await this.userRepository.findById(userId);
       if (!existingUser) {
         const message = `User with id ${userId} not found.`;
-        this.logger.warn!(`UpdateUser failed: ${message}`, { userId }); // Add { userId } as second arg
+        this.logger.warn!(`UpdateUser failed: ${message}`, { userId });
 
         this.emitOutput('USER_NOT_FOUND', message);
         return;

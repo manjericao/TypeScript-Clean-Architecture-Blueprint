@@ -23,7 +23,7 @@ type CreateUserEvents = BaseOperationEvents<UserResponseDTO> & {
 /**
  * CreateUser is a class responsible for handling the user creation process.
  * It includes validation, checks for conflicts such as existing email or username,
- * hashes the user's password, and triggers necessary events on completion.
+ * hashes the user's password, and triggers the necessary events on completion.
  * Extends BaseOperation to manage events such as SUCCESS, ERROR, VALIDATION_ERROR, and USER_EXISTS.
  *
  * @extends BaseOperation<CreateUserEvents>

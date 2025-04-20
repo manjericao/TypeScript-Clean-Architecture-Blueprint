@@ -57,7 +57,7 @@ export interface IConfig {
    * Configuration object for storage.
    *
    * This object defines the structure required for specifying storage
-   * details, including storage type and specific configurations for AWS storage.
+   * details, including a storage type and specific configurations for AWS storage.
    *
    * Properties:
    * - `type`: A string representing the type of storage used.
@@ -66,7 +66,7 @@ export interface IConfig {
    * - `aws.bucketName`: The name of the S3 bucket. Can be undefined if not configured.
    * - `aws.accessKeyId`: AWS access key ID for authentication. Can be undefined if not configured.
    * - `aws.secretAccessKey`: AWS secret access key for authentication. Can be undefined if not configured.
-   * - `aws.region`: The AWS region where the S3 bucket is located. Can be undefined if not configured.
+   * - `aws.region`: The AWS region where the S3 bucket is located. It can be undefined if not configured.
    */
   readonly storage: {
     type: string;

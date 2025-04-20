@@ -1,14 +1,16 @@
 import 'reflect-metadata';
 import 'module-alias/register';
-import * as dotenvSafe from 'dotenv-safe';
 import path from 'path';
-import { container, runBootstrappers } from '@infrastructure/ioc';
+
+import * as dotenvSafe from 'dotenv-safe';
+
 import { Application } from '@application/Application';
-import { RouterFactory, Server } from '@infrastructure/web';
-import { Types } from '@interface/types';
-import { envSchema, EnvVars } from '@infrastructure/config';
 import { IConfig, IDatabase, ILogger } from '@application/contracts/infrastructure';
+import { envSchema, EnvVars } from '@infrastructure/config';
+import { container, runBootstrappers } from '@infrastructure/ioc';
+import { RouterFactory, Server } from '@infrastructure/web';
 import { IAuthMiddleware } from '@infrastructure/web/middleware';
+import { Types } from '@interface/types';
 
 /**
  * Class responsible for bootstrapping and initializing the application.
@@ -32,7 +34,7 @@ class ApplicationBootstrap {
       dotenvSafe.config({
         allowEmptyValues: true,
         example: path.join(__dirname, '../.env.example'),
-        path: path.join(__dirname, '../.env'),
+        path: path.join(__dirname, '../.env')
       });
 
       const parseResult = envSchema.safeParse(process.env);
@@ -58,10 +60,7 @@ class ApplicationBootstrap {
         const mongoDatabase = container.get<IDatabase>(Types.Database);
         const redisDatabase = container.get<IDatabase>(Types.RedisConnection);
 
-        await Promise.all([
-          mongoDatabase.disconnect(),
-          redisDatabase.disconnect()
-        ]);
+        await Promise.all([mongoDatabase.disconnect(), redisDatabase.disconnect()]);
 
         this.logger.info('Cleanup complete, shutting down.');
         process.exit(0);
@@ -82,13 +81,13 @@ class ApplicationBootstrap {
 
     // Process handlers
     process.on('SIGTERM', () => {
-      handleExit('SIGTERM').catch(err => {
+      handleExit('SIGTERM').catch((err) => {
         this.logger.error('Error in SIGTERM handler:', err);
         process.exit(1);
       });
     });
     process.on('SIGINT', () => {
-      handleExit('SIGINT').catch(err => {
+      handleExit('SIGINT').catch((err) => {
         this.logger.error('Error in SIGINT handler:', err);
         process.exit(1);
       });
@@ -123,11 +122,7 @@ class ApplicationBootstrap {
 
       const server = this.createServer();
 
-      const application = new Application(
-        this.logger,
-        databases,
-        server,
-      );
+      const application = new Application(this.logger, databases, server);
 
       await application.start();
 
@@ -142,7 +137,7 @@ class ApplicationBootstrap {
           port: this.env.PORT,
           mongoDbUrl: this.env.MONGODB_URL,
           storageType: this.env.STORAGE_TYPE,
-          mongooseDebug: this.env.MONGOOSE_DEBUG,
+          mongooseDebug: this.env.MONGOOSE_DEBUG
         });
       }
     } catch (error) {

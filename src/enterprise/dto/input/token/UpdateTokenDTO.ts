@@ -1,7 +1,8 @@
-import { TokenType } from '@enterprise/enum';
-import { IsEnum, IsBoolean, IsDate, IsUUID, IsOptional, ValidateIf } from 'class-validator';
 import { Expose, Type } from 'class-transformer';
+import { IsEnum, IsBoolean, IsDate, IsUUID, IsOptional, ValidateIf } from 'class-validator';
+
 import { BaseDTO } from '@enterprise/dto/input/base';
+import { TokenType } from '@enterprise/enum';
 
 /**
  * Data Transfer Object for updating token entities.
@@ -34,11 +35,9 @@ export class UpdateTokenDTO extends BaseDTO {
   @IsBoolean({ message: 'isRevoked must be a boolean value' })
   isRevoked?: boolean;
 
-  @ValidateIf(o => true) // This will always run
+  @ValidateIf(() => true) // This will always run
   hasAtLeastOneField(): boolean {
-    return Object.keys(this).some(key =>
-      this[key as keyof UpdateTokenDTO] !== undefined
-    );
+    return Object.keys(this).some((key) => this[key as keyof UpdateTokenDTO] !== undefined);
   }
 
   /**

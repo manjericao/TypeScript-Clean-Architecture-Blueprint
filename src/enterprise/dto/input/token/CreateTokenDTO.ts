@@ -1,8 +1,13 @@
 import { Expose, Transform, Type } from 'class-transformer';
 import { IsEnum, IsNotEmpty, IsUUID, IsBoolean, IsDate, ValidateIf } from 'class-validator';
-import { TokenType } from '@enterprise/enum';
-import { BaseDTO } from '@enterprise/dto/input/base';
 
+import { BaseDTO } from '@enterprise/dto/input/base';
+import { TokenType } from '@enterprise/enum';
+
+/**
+ * Data Transfer Object (DTO) for creating a token.
+ * This class is used to encapsulate and validate input data when creating a token.
+ */
 export class CreateTokenDTO extends BaseDTO {
   @Expose()
   @IsUUID('4', { message: 'User ID must be a valid UUID' })

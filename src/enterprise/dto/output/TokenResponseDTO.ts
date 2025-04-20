@@ -1,6 +1,6 @@
-import { TokenType } from '@enterprise/enum';
-import { Token } from '@enterprise/entities';
 import { DTOConversionError } from '@enterprise/dto/errors';
+import { Token } from '@enterprise/entities';
+import { TokenType } from '@enterprise/enum';
 
 /**
  * Data Transfer Object representing a token entity in response objects.

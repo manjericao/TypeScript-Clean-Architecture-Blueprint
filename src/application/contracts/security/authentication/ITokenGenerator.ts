@@ -6,18 +6,14 @@ import { TokenType } from '@enterprise/enum';
  */
 export interface ITokenGenerator {
   /**
-   * Generates a token string of the specified type with optional payload.
+   * Generates a token string of the specified type with an optional payload.
    *
    * @param {TokenType} type - The type of token to generate (ACCESS, REFRESH, VERIFICATION, etc.)
    * @param {Record<string, any>} payload - Optional payload to include in the token
    * @param {number} [expiresIn] - Optional expiration time in seconds
    * @returns {string} The generated token string
    */
-  generateToken(
-    type: TokenType,
-    expiresIn?: number,
-    payload?: Record<string, unknown>,
-  ): string;
+  generateToken(type: TokenType, expiresIn?: number, payload?: Record<string, unknown>): string;
 
   /**
    * Validates a given token based on the specified token type.

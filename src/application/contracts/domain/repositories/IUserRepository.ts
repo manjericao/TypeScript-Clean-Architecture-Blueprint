@@ -1,6 +1,6 @@
-import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
 import { CreateUserDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
 import { UserWithPasswordDTO } from '@enterprise/dto/internal';
+import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
 
 /**
  * Interface for the repository handling user data.
@@ -15,7 +15,7 @@ export interface IUserRepository {
    * @param {CreateUserDTO} data - The user data to be created.
    * @returns {Promise<UserResponseDTO>} The created user data.
    */
-  create(data: CreateUserDTO): Promise<UserResponseDTO>
+  create(data: CreateUserDTO): Promise<UserResponseDTO>;
 
   /**
    * Finds a user by their email address.
@@ -23,7 +23,7 @@ export interface IUserRepository {
    * @param {string} email - The email address of the user.
    * @returns {Promise<UserResponseDTO | unknown>} The found user data, or undefined if not found.
    */
-  findByEmail(email: string): Promise<UserResponseDTO | undefined>
+  findByEmail(email: string): Promise<UserResponseDTO | undefined>;
 
   /**
    * Retrieves a user based on their username.
@@ -31,7 +31,7 @@ export interface IUserRepository {
    * @param {string} username - The username of the user to find.
    * @return {Promise<UserResponseDTO | undefined>} A promise that resolves to the user's details as a UserResponseDTO object, or undefined if the user is not found.
    */
-  findByUsername(username: string): Promise<UserResponseDTO | undefined>
+  findByUsername(username: string): Promise<UserResponseDTO | undefined>;
 
   /**
    * Finds a user by their ID.
@@ -39,7 +39,7 @@ export interface IUserRepository {
    * @param {string} id - The ID of the user.
    * @returns {Promise<UserResponseDTO | undefined>} The found user data, or undefined if not found.
    */
-  findById(id: string): Promise<UserResponseDTO | undefined>
+  findById(id: string): Promise<UserResponseDTO | undefined>;
 
   /**
    * Retrieves a user by their email address along with their password.
@@ -66,10 +66,7 @@ export interface IUserRepository {
    * @param {Partial<UpdateUserDTO>} data - An object containing the fields to be updated for the user.
    * @return {Promise<UserResponseDTO>} A promise that resolves to the updated user data.
    */
-  update(
-    id: string,
-    data: Partial<UpdateUserDTO>,
-  ): Promise<UserResponseDTO>
+  update(id: string, data: Partial<UpdateUserDTO>): Promise<UserResponseDTO>;
 
   /**
    * Deletes a user by their ID.
@@ -77,5 +74,5 @@ export interface IUserRepository {
    * @param {string} id - The ID of the user to be deleted.
    * @returns {Promise<void>} A promise that resolves when the user is deleted.
    */
-  delete(id: string): Promise<void>
+  delete(id: string): Promise<void>;
 }

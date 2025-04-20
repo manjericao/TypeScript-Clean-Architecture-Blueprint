@@ -1,5 +1,6 @@
-import { IsNotEmpty, IsEnum, IsDate, IsUUID, IsOptional, IsBoolean } from 'class-validator';
 import { Expose } from 'class-transformer';
+import { IsNotEmpty, IsEnum, IsDate, IsUUID, IsOptional, IsBoolean } from 'class-validator';
+
 import { TokenType } from '@enterprise/enum';
 
 export interface IToken {

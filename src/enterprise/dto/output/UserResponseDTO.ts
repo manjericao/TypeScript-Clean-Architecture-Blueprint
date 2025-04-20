@@ -56,7 +56,7 @@ export class UserResponseDTO {
    * A boolean variable that indicates whether something has been verified.
    *
    * This variable is typically used to determine if an entity, user, or process has completed a verification step.
-   * It should hold a value of `true` if the verification has been successfully completed, and `false` otherwise.
+   * It should hold the value of `true` if the verification has been successfully completed, and `false` otherwise.
    */
   isVerified!: boolean;
 }

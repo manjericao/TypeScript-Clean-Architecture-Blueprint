@@ -1,5 +1,5 @@
-import { DomainEvent, EventOptions } from '@enterprise/events/base';
 import { UserResponseDTO } from '@enterprise/dto/output';
+import { DomainEvent, EventOptions } from '@enterprise/events/base';
 
 /**
  * Event emitted when a new authentication token is created.
@@ -8,7 +8,10 @@ import { UserResponseDTO } from '@enterprise/dto/output';
  * typically during login or token refresh operations.
  */
 export class TokenCreatedEvent extends DomainEvent {
-  constructor(public readonly user: UserResponseDTO, options?: EventOptions) {
+  constructor(
+    public readonly user: UserResponseDTO,
+    options?: EventOptions
+  ) {
     super(options);
   }
 

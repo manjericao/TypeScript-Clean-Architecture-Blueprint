@@ -40,7 +40,6 @@ export interface ITokenRepository {
    */
   findByToken(token: string): Promise<TokenResponseDTO | undefined>;
 
-
   /**
    * Updates token information.
    *

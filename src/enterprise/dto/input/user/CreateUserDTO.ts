@@ -1,8 +1,9 @@
 import { Expose, Transform } from 'class-transformer';
 import { IsEmail, IsEnum, IsNotEmpty, IsOptional, Matches } from 'class-validator';
-import { UserRole, Gender } from '@enterprise/enum';
-import { BaseDTO } from '@enterprise/dto/input/base';
+
 import { DTOValidationError } from '@enterprise/dto/errors';
+import { BaseDTO } from '@enterprise/dto/input/base';
+import { UserRole, Gender } from '@enterprise/enum';
 
 /**
  * CreateUserDTO is a data transfer object used to handle user creation.
@@ -42,10 +43,9 @@ export class CreateUserDTO extends BaseDTO {
 
   @Expose()
   @IsNotEmpty({ message: 'Password is required' })
-  @Matches(
-    /^(?=.*\d)(?=.*[A-Z])(?=.*[a-z])(?=.*[!@#$%^&*])[\w!@#$%^&*]{8,}$/,
-    { message: 'Password must meet complexity requirements' }
-  )
+  @Matches(/^(?=.*\d)(?=.*[A-Z])(?=.*[a-z])(?=.*[!@#$%^&*])[\w!@#$%^&*]{8,}$/, {
+    message: 'Password must meet complexity requirements'
+  })
   password!: string;
 
   @Expose()
@@ -83,7 +83,7 @@ export class CreateUserDTO extends BaseDTO {
 
   /**
    * Validates the provided data and creates an instance of CreateUserDTO.
-   * Also check if password and repeatPassword match.
+   * Also check if the password and repeatPassword match.
    *
    * @param data The data to validate and transform
    * @returns A validated CreateUserDTO instance

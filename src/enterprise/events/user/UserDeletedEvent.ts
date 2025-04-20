@@ -1,7 +1,7 @@
 import { DomainEvent, EventOptions } from '@enterprise/events/base';
 
 /**
- * Represents an event that is triggered when a user has been deleted.
+ * Represents an event triggered when a user has been deleted.
  * This class extends the DomainEvent base class and provides specific
  * information about the deletion of a user within the system.
  *
@@ -16,7 +16,10 @@ import { DomainEvent, EventOptions } from '@enterprise/events/base';
  * @param {EventOptions} [options] - Additional options for the event, if any.
  */
 export class UserDeletedEvent extends DomainEvent {
-  constructor(public readonly userId: string, options?: EventOptions) {
+  constructor(
+    public readonly userId: string,
+    options?: EventOptions
+  ) {
     super(options);
   }
 

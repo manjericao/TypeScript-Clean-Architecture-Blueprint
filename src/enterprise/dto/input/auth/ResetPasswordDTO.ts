@@ -1,5 +1,6 @@
 import { Expose } from 'class-transformer';
 import { IsNotEmpty, IsString, Length } from 'class-validator';
+
 import { BaseDTO } from '@enterprise/dto/input/base';
 
 /**

@@ -1,5 +1,5 @@
-import { DomainEvent, EventOptions } from '@enterprise/events/base';
 import { TokenResponseDTO, UserResponseDTO } from '@enterprise/dto/output';
+import { DomainEvent, EventOptions } from '@enterprise/events/base';
 
 /**
  * Event emitted when a user requests a password reset.

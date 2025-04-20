@@ -1,5 +1,6 @@
-import { IsEmail, IsNotEmpty } from 'class-validator';
 import { Expose } from 'class-transformer';
+import { IsEmail, IsNotEmpty } from 'class-validator';
+
 import { BaseDTO } from '@enterprise/dto/input/base';
 
 /**

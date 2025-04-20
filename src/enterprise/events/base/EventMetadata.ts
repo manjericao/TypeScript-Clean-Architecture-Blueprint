@@ -23,4 +23,3 @@ export interface EventOptions {
   actor?: string;
   context?: Record<string, unknown>;
 }
-
