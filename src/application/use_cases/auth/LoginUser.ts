@@ -1,130 +1,156 @@
-import { Operation } from '@application/use_cases/base';
+import { IUserRepository } from '@application/contracts/domain/repositories';
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import { IJWTTokenGenerator } from '@application/contracts/security/authentication';
+import { IPasswordHasher } from '@application/contracts/security/encryption';
+import { BaseOperationEvents, BaseOperation, OperationError } from '@application/use_cases/base';
 import { AuthenticateUserDTO } from '@enterprise/dto/input/auth';
 import { TokenType } from '@enterprise/enum';
-import { IPasswordHasher } from '@application/contracts/security/encryption';
-import { IJWTTokenGenerator } from '@application/contracts/security/authentication';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
-import { IUserRepository } from '@application/contracts/domain/repositories';
 
 /**
- * Interface representing the events related to user login.
- * This interface extends a generalized record structure to map event keys to their associated values.
- * It provides a standardized way to handle various outcomes of user authentication.
- *
- * @interface LoginUserEvents
+ * Defines the payload for the SUCCESS event upon successful login.
  */
-interface LoginUserEvents extends Record<string, unknown> {
-  SUCCESS: {
-    userId: string;
-    accessToken: string;
-    accessTokenExpires: Date;
-    refreshToken: string;
-    refreshTokenExpires: Date;
-  };
-  ERROR: Error;
+type LoginSuccessPayload = {
+  userId: string;
+  accessToken: string;
+  accessTokenExpires: Date;
+  refreshToken: string;
+  refreshTokenExpires: Date;
+};
+
+/**
+ * Defines the events specific to the LoginUser operation.
+ * Extends BaseOperationEvents where SUCCESS payload is LoginSuccessPayload
+ * and ERROR payload is OperationError.
+ * Includes specific failure cases:
+ * - INVALID_CREDENTIALS: Emitted with a string message for incorrect password.
+ * - USER_NOT_FOUND: Emitted with a string message when the provided email doesn't exist.
+ * - ACCOUNT_NOT_VERIFIED: Emitted with a string message when the account is not verified.
+ */
+type LoginUserEvents = BaseOperationEvents<LoginSuccessPayload> & {
   INVALID_CREDENTIALS: string;
   USER_NOT_FOUND: string;
   ACCOUNT_NOT_VERIFIED: string;
-}
+};
 
 /**
- * The LoginUser class is responsible for authenticating users based on their credentials.
- * It extends the Operation class and utilizes dependencies such as IUserRepository for retrieving
- * user data and IPasswordHasher for validating passwords.
+ * LoginUser handles the user authentication process.
+ * It finds the user by email, verifies the password, checks account status (verified),
+ * generates access and refresh tokens upon success.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR, INVALID_CREDENTIALS, USER_NOT_FOUND, ACCOUNT_NOT_VERIFIED.
+ *
+ * @extends BaseOperation<LoginUserEvents>
  */
-export class LoginUser extends Operation<LoginUserEvents> {
-  /**
-   * Constructs an instance of the service.
-   *
-   * @param {IUserRepository} userRepository - Provides methods to interact with user data storage.
-   * @param {IPasswordHasher} passwordHasher - Utility to hash and verify passwords.
-   * @param {IJWTTokenGenerator} tokenGenerator - Service to generate authentication tokens.
-   * @param {IConfig} config - Configuration provider for application settings.
-   * @param {ILogger} logger - Logger for capturing and managing application logs.
-   */
+export class LoginUser extends BaseOperation<LoginUserEvents> {
   constructor(
-    private userRepository: IUserRepository,
-    private passwordHasher: IPasswordHasher,
-    private tokenGenerator: IJWTTokenGenerator,
-    private config: IConfig,
-    private logger: ILogger
+    private readonly userRepository: IUserRepository,
+    private readonly passwordHasher: IPasswordHasher,
+    private readonly tokenGenerator: IJWTTokenGenerator,
+    private readonly config: IConfig,
+    readonly logger: ILogger
   ) {
-    super(['SUCCESS', 'ERROR', 'INVALID_CREDENTIALS', 'USER_NOT_FOUND', 'ACCOUNT_NOT_VERIFIED']);
+    super(
+      ['SUCCESS', 'ERROR', 'INVALID_CREDENTIALS', 'USER_NOT_FOUND', 'ACCOUNT_NOT_VERIFIED'],
+      logger
+    );
   }
 
   /**
-   * Executes the user login process. Validates the user credentials, checks if the account
-   * is verified, and generates an authentication token upon successful login.
-   * Emits specific outputs based on the operation's result.
+   * Executes the user login process.
+   * Validates credentials, checks user status, generates tokens, and emits events.
    *
-   * @param {AuthenticateUserDTO} credentials - An object containing the user's email and password.
-   * @return {Promise<void>} A promise that resolves when the process is complete.
+   * @param {AuthenticateUserDTO} credentials - The input DTO containing email and password.
+   * @returns {Promise<void>} A promise that resolves when the operation is complete.
    */
   async execute(credentials: AuthenticateUserDTO): Promise<void> {
-    const { SUCCESS, ERROR, INVALID_CREDENTIALS, USER_NOT_FOUND, ACCOUNT_NOT_VERIFIED } = this.outputs;
+    this.logger.info(`LoginUser operation started for email: ${credentials.email}`, {
+      input: { email: credentials.email }
+    });
 
     try {
-      this.logger.info('Attempting user login', { email: credentials.email });
-
+      this.logger.debug(`Attempting to find user by email: ${credentials.email}`);
       const userWithPassword = await this.userRepository.findByEmailWithPassword(credentials.email);
 
       if (!userWithPassword) {
-        this.logger.error('Login attempt for non-existent user', { email: credentials.email });
-        this.emitOutput(USER_NOT_FOUND, `No user found with email ${credentials.email}`);
+        const message = `Authentication failed: No user found with email ${credentials.email}`;
+        this.logger.warn!(message);
+
+        this.emitOutput('USER_NOT_FOUND', message);
         return;
       }
 
+      this.logger.debug(`Comparing password for user: ${userWithPassword.id}`);
       const isPasswordValid = await this.passwordHasher.comparePasswords(
         credentials.password,
         userWithPassword.password
       );
 
       if (!isPasswordValid) {
-        this.logger.error('Invalid password attempt', { email: credentials.email });
-        this.emitOutput(INVALID_CREDENTIALS, 'Invalid email or password');
+        const message = `Authentication failed: Invalid credentials provided for email ${credentials.email}`;
+        this.logger.warn!(message);
+
+        this.emitOutput('INVALID_CREDENTIALS', 'Invalid email or password.'); // Generic message to user
         return;
       }
 
       if (!userWithPassword.isVerified) {
-        this.logger.error('Login attempt on unverified account', { email: credentials.email });
-        this.emitOutput(ACCOUNT_NOT_VERIFIED, 'Please verify your email before logging in');
+        const message = `Authentication failed: Account not verified for email ${credentials.email}`;
+        this.logger.warn!(message);
+
+        this.emitOutput('ACCOUNT_NOT_VERIFIED', 'Please verify your email before logging in.');
         return;
       }
 
+      this.logger.debug(`Generating tokens for user: ${userWithPassword.id}`);
+      const now = Date.now();
+
+      const accessTokenPayload = {
+        userId: userWithPassword.id,
+        email: userWithPassword.email,
+        role: userWithPassword.role
+      };
       const accessToken = this.tokenGenerator.generateJWTToken(
-        {
-          userId: userWithPassword.id,
-          email: userWithPassword.email,
-          role: userWithPassword.role
-        },
+        accessTokenPayload,
         TokenType.ACCESS,
-        this.config.jwt.accessExpirationMinutes,
+        this.config.jwt.accessExpirationMinutes
+      );
+      const accessTokenExpires = new Date(
+        now + this.config.jwt.accessExpirationMinutes * 60 * 1000
       );
 
+      const refreshTokenPayload = {
+        userId: userWithPassword.id
+      };
       const refreshToken = this.tokenGenerator.generateJWTToken(
-        {
-          userId: userWithPassword.id,
-          email: userWithPassword.email,
-          role: userWithPassword.role
-        },
+        refreshTokenPayload,
         TokenType.REFRESH,
-        this.config.jwt.refreshExpirationDays,
-      )
+        this.config.jwt.refreshExpirationDays * 24 * 60
+      );
+      const refreshTokenExpires = new Date(
+        now + this.config.jwt.refreshExpirationDays * 24 * 60 * 60 * 1000
+      );
 
-      this.logger.info('User logged in successfully', { userId: userWithPassword.id });
-
-      const now = new Date();
-
-      this.emitOutput(SUCCESS, {
+      const successPayload: LoginSuccessPayload = {
         userId: userWithPassword.id,
-        accessToken: accessToken,
-        accessTokenExpires: new Date(now.getTime() + (this.config.jwt.accessExpirationMinutes * 60 * 1000)),
-        refreshToken: refreshToken,
-        refreshTokenExpires: new Date(now.getTime() + (this.config.jwt.refreshExpirationDays * 24 * 60 * 60 * 1000))
+        accessToken,
+        accessTokenExpires,
+        refreshToken,
+        refreshTokenExpires
+      };
+
+      this.logger.info(`LoginUser succeeded: User logged in successfully.`, {
+        userId: userWithPassword.id
       });
+
+      this.emitSuccess(successPayload);
     } catch (error) {
-      this.logger.error('Error during login', { error });
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(
+        new OperationError(
+          'LOGIN_FAILED',
+          `Failed to process login request for ${credentials.email}: ${err.message}`,
+          err
+        )
+      );
     }
   }
 }
