@@ -1,116 +1,139 @@
-import { Operation } from '@application/use_cases/base';
+import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { IPasswordHasher } from '@application/contracts/security/encryption';
+import { BaseOperationEvents, BaseOperation, OperationError } from '@application/use_cases/base';
 import { ResetPasswordDTO } from '@enterprise/dto/input/auth';
 import { TokenType } from '@enterprise/enum';
-import { IPasswordHasher } from '@application/contracts/security/encryption';
-import { ILogger } from '@application/contracts/infrastructure';
-import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
 
 /**
- * Represents events that can occur during the reset password process.
+ * Defines the payload for the SUCCESS event upon successful password reset.
  */
-interface ResetPasswordEvents extends Record<string, unknown> {
-  SUCCESS: { message: string };
-  ERROR: Error;
+type ResetPasswordSuccessPayload = {
+  message: string;
+  userId: string; // Include userId for better context
+};
+
+/**
+ * Defines the events specific to the ResetPassword operation.
+ * Extends BaseOperationEvents where SUCCESS payload is ResetPasswordSuccessPayload
+ * and ERROR payload is OperationError.
+ * Includes specific failure cases:
+ * - TOKEN_NOT_FOUND: Emitted with a string message when the reset token is invalid or doesn't exist.
+ * - TOKEN_EXPIRED: Emitted with a string message when the reset token has expired.
+ * - INVALID_TOKEN: Emitted with a string message for an incorrect token type or associated user issues.
+ */
+type ResetPasswordEvents = BaseOperationEvents<ResetPasswordSuccessPayload> & {
   TOKEN_NOT_FOUND: string;
   TOKEN_EXPIRED: string;
   INVALID_TOKEN: string;
-}
+};
 
 /**
- * ResetPassword is a use-case class for managing the password reset process.
- * It validates the provided reset token, ensures it is valid and not expired,
- * updates the user's password, and deletes the used token upon success.
+ * ResetPassword handles the process of resetting a user's password using a verification token.
+ * It validates the token, finds the user, hashes the new password, updates the user, and deletes the token.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR, TOKEN_NOT_FOUND, TOKEN_EXPIRED, INVALID_TOKEN.
  *
- * The class communicates the result of the operation by emitting predefined
- * output events such as SUCCESS, ERROR, TOKEN_NOT_FOUND, TOKEN_EXPIRED,
- * and INVALID_TOKEN.
- *
- * Dependencies:
- * - IUserRepository: Interface for user data access methods.
- * - ITokenRepository: Interface for token storage and retrieval.
- * - IPasswordHasher: Interface for hashing passwords.
- * - ILogger: Interface for logging activities within the reset process.
- *
- * Outputs:
- * - SUCCESS: Indicates password reset was successful.
- * - ERROR: Indicates an error occurred during the password reset process.
- * - TOKEN_NOT_FOUND: Indicates the token is invalid, non-existent, or user associated with the token is not found.
- * - TOKEN_EXPIRED: Indicates the reset token has expired.
- * - INVALID_TOKEN: Indicates the token is not of the correct type for password reset.
+ * @extends BaseOperation<ResetPasswordEvents>
  */
-export class ResetPassword extends Operation<ResetPasswordEvents> {
-  /**
-   * Constructs an instance of the class.
-   *
-   * @param {IUserRepository} userRepository - Repository to handle user-related data operations.
-   * @param {ITokenRepository} tokenRepository - Repository to manage token-related data operations.
-   * @param {IPasswordHasher} passwordHasher - Utility for handling password hashing and verification.
-   * @param {ILogger} logger - Logger used for logging application events or errors.
-   * @return {void}
-   */
+export class ResetPassword extends BaseOperation<ResetPasswordEvents> {
   constructor(
-    private userRepository: IUserRepository,
-    private tokenRepository: ITokenRepository,
-    private passwordHasher: IPasswordHasher,
-    private logger: ILogger
+    private readonly userRepository: IUserRepository,
+    private readonly tokenRepository: ITokenRepository,
+    private readonly passwordHasher: IPasswordHasher,
+    readonly logger: ILogger
   ) {
-    super(['SUCCESS', 'ERROR', 'TOKEN_NOT_FOUND', 'TOKEN_EXPIRED', 'INVALID_TOKEN']);
+    super(['SUCCESS', 'ERROR', 'TOKEN_NOT_FOUND', 'TOKEN_EXPIRED', 'INVALID_TOKEN'], logger);
   }
 
   /**
    * Executes the password reset process.
+   * Validates the token, updates the password, and emits events based on the outcome.
    *
-   * @param {ResetPasswordDTO} data - The data object containing the reset token and new password.
-   * @returns {Promise<void>} A promise that resolves when the password reset operation is complete.
+   * @param {ResetPasswordDTO} data - The input DTO containing the reset token and the new password.
+   * @returns {Promise<void>} A promise that resolves when the operation is complete.
    */
   async execute(data: ResetPasswordDTO): Promise<void> {
-    const { SUCCESS, ERROR, TOKEN_NOT_FOUND, TOKEN_EXPIRED, INVALID_TOKEN } = this.outputs;
+    this.logger.info('ResetPassword operation started.', {
+      tokenProvided: !!data.token
+    });
 
     try {
-      this.logger.info('Processing password reset', { token: data.token });
-
+      this.logger.debug('Attempting to find reset token record.');
       const tokenRecord = await this.tokenRepository.findByToken(data.token);
 
       if (!tokenRecord) {
-        this.logger.error('Reset password token not found');
-        this.emitOutput(TOKEN_NOT_FOUND, 'Invalid or expired reset token');
+        const message = 'Password reset failed: Token not found in repository.';
+        this.logger.warn!(message);
+
+        this.emitOutput('TOKEN_NOT_FOUND', 'Invalid or expired password reset link.');
         return;
       }
 
-      // Validate token type and expiration
+      this.logger.debug('Found token record.', {
+        tokenId: tokenRecord.id,
+        userId: tokenRecord.userId,
+        type: tokenRecord.type
+      });
+
       if (tokenRecord.type !== TokenType.RESET_PASSWORD) {
-        this.logger.error('Invalid token type for password reset');
-        this.emitOutput(INVALID_TOKEN, 'Invalid reset token');
+        const message = `Password reset failed: Invalid token type. Expected ${TokenType.RESET_PASSWORD}, got ${tokenRecord.type}.`;
+        this.logger.warn!(message, { tokenId: tokenRecord.id });
+        this.emitOutput('INVALID_TOKEN', 'Invalid password reset link.');
         return;
       }
 
       if (new Date() > tokenRecord.expiresAt) {
-        this.logger.error('Reset password token expired');
-        this.emitOutput(TOKEN_EXPIRED, 'Reset token has expired');
+        const message = `Password reset failed: Token expired.`;
+        this.logger.warn!(message, { tokenId: tokenRecord.id, expiresAt: tokenRecord.expiresAt });
+
+        await this.tokenRepository.delete(tokenRecord.id!);
+        this.emitOutput(
+          'TOKEN_EXPIRED',
+          'Password reset link has expired. Please request a new one.'
+        );
         return;
       }
 
+      this.logger.debug(`Attempting to find user associated with token.`, {
+        userId: tokenRecord.userId
+      });
       const user = await this.userRepository.findById(tokenRecord.userId);
 
       if (!user) {
-        this.logger.error('User not found for reset token');
-        this.emitOutput(TOKEN_NOT_FOUND, 'User not found');
+        const message = `Password reset failed: User associated with token not found.`;
+        this.logger.error(message, { userId: tokenRecord.userId, tokenId: tokenRecord.id });
+
+        this.emitOutput('INVALID_TOKEN', 'Invalid password reset link.');
         return;
       }
 
-      // Hash new password
+      this.logger.debug(`Hashing new password for user.`, { userId: user.id });
       const hashedPassword = await this.passwordHasher.hashPassword(data.newPassword);
 
+      this.logger.debug(`Updating user password in repository.`, { userId: user.id });
       await this.userRepository.update(user.id, { password: hashedPassword });
 
-      // Delete the reset token
+      this.logger.debug(`Deleting used reset token.`, { tokenId: tokenRecord.id });
       await this.tokenRepository.delete(tokenRecord.id!);
 
-      this.logger.info('Password successfully reset', { userId: user.id });
-      this.emitOutput(SUCCESS, { message: 'Password reset successful' });
+      const successPayload: ResetPasswordSuccessPayload = {
+        message: 'Password has been reset successfully.',
+        userId: user.id
+      };
+
+      this.logger.info(`ResetPassword succeeded: Password successfully reset for user.`, {
+        userId: user.id
+      });
+      this.emitSuccess(successPayload);
     } catch (error) {
-      this.logger.error('Error in password reset process', error);
-      this.emitOutput(ERROR, error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(
+        new OperationError(
+          'RESET_PASSWORD_FAILED',
+          `Failed to process password reset request: ${err.message}`,
+          err
+        )
+      );
     }
   }
 }
