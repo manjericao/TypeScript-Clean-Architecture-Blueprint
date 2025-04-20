@@ -1,106 +1,173 @@
-import { Operation } from '@application/use_cases/base';
-import { TokenType } from '@enterprise/enum';
-import { ILogger } from '@application/contracts/infrastructure';
 import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { BaseOperationEvents, BaseOperation, OperationError } from '@application/use_cases/base';
+import { TokenInputDTO } from '@enterprise/dto/input/token';
+import { TokenType } from '@enterprise/enum';
 
 /**
- * Interface representing the event payloads for email verification events.
- *
- * This interface defines the structure of various events that can occur during
- * the email verification process.
- *
- * Properties:
- *  - SUCCESS: Represents a successful email verification. Contains the user's ID.
- *  - ERROR: Represents a general error event. Contains an instance of the Error object.
- *  - TOKEN_NOT_FOUND: Represents an error when the verification token is not found.
- *  - USER_NOT_FOUND: Represents an error when the user associated with the token is not found.
- *  - TOKEN_EXPIRED: Represents an error when the verification token has expired.
- *  - ALREADY_VERIFIED: Represents a notification when the user is already verified.
+ * Defines the payload for the SUCCESS event upon successful email verification.
  */
-interface VerifyEmailEvents extends Record<string, unknown> {
-  SUCCESS: { userId: string };
-  ERROR: Error;
+type VerifyEmailSuccessPayload = {
+  userId: string;
+};
+
+/**
+ * Defines the payload for the ALREADY_VERIFIED event.
+ */
+type AlreadyVerifiedPayload = {
+  userId: string;
+};
+
+/**
+ * Defines the events specific to the VerifyEmail operation.
+ * Extends BaseOperationEvents where SUCCESS payload is VerifyEmailSuccessPayload
+ * and ERROR payload is OperationError.
+ * Includes specific failure/status cases:
+ * - TOKEN_NOT_FOUND: Emitted with a string message when the verification token is not found.
+ * - USER_NOT_FOUND: Emitted with a string message when the user associated with the token is not found.
+ * - TOKEN_EXPIRED: Emitted with a string message when the token has expired.
+ * - INVALID_TOKEN: Emitted with a string message for tokens of the wrong type.
+ * - ALREADY_VERIFIED: Emitted with AlreadyVerifiedPayload when the user's email is already verified.
+ */
+type VerifyEmailEvents = BaseOperationEvents<VerifyEmailSuccessPayload> & {
   TOKEN_NOT_FOUND: string;
   USER_NOT_FOUND: string;
   TOKEN_EXPIRED: string;
-  ALREADY_VERIFIED: { userId: string };
-}
+  INVALID_TOKEN: string;
+  ALREADY_VERIFIED: AlreadyVerifiedPayload;
+};
 
 /**
- * The `VerifyEmail` class provides functionality for verifying a user's email
- * by validating a verification token and updating the user's verification status.
+ * VerifyEmail handles the email verification process using a token.
+ * It finds the token, validates it (type, expiry), finds the associated user,
+ * verifies the user if not already verified, and cleans up the token.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR, TOKEN_NOT_FOUND,
+ * USER_NOT_FOUND, TOKEN_EXPIRED, INVALID_TOKEN, ALREADY_VERIFIED.
+ *
+ * @extends BaseOperation<VerifyEmailEvents>
  */
-export class VerifyEmail extends Operation<VerifyEmailEvents> {
-  /**
-   * Constructs an instance of the VerifyEmail class with required dependencies.
-   *
-   * @param {IUserRepository} userRepository - The repository instance for user data operations.
-   * @param {ITokenRepository} tokenRepository - The repository instance for token operations.
-   * @param {ILogger} logger - The logger instance for logging messages and errors.
-   */
+export class VerifyEmail extends BaseOperation<VerifyEmailEvents> {
   constructor(
-    private userRepository: IUserRepository,
-    private tokenRepository: ITokenRepository,
-    private logger: ILogger
+    private readonly userRepository: IUserRepository,
+    private readonly tokenRepository: ITokenRepository,
+    readonly logger: ILogger
   ) {
-    super(['SUCCESS', 'ERROR', 'TOKEN_NOT_FOUND', 'USER_NOT_FOUND', 'TOKEN_EXPIRED', 'ALREADY_VERIFIED']);
+    super(
+      [
+        'SUCCESS',
+        'ERROR',
+        'TOKEN_NOT_FOUND',
+        'USER_NOT_FOUND',
+        'TOKEN_EXPIRED',
+        'INVALID_TOKEN',
+        'ALREADY_VERIFIED'
+      ],
+      logger
+    );
   }
 
   /**
-   * Executes the email verification process using the provided token.
+   * Executes the email verification process.
+   * Validates the token, checks user status, marks the user as verified, deletes the token, and emits events.
    *
-   * @param {string} token - The verification token string.
-   * @return {Promise<void>} A promise that resolves once the verification process completes.
+   * @param {TokenInputDTO} dto - The verification token provided by the user.
+   * @returns {Promise<void>} A promise that resolves when the operation is complete.
    */
-  async execute(token: string): Promise<void> {
+  async execute(dto: TokenInputDTO): Promise<void> {
+    const { token } = dto;
+
+    this.logger.info(`VerifyEmail operation started.`, { input: { token: '[REDACTED]' } });
+
     try {
+      this.logger.debug('Attempting to find verification token.');
       const tokenRecord = await this.tokenRepository.findByToken(token);
 
       if (!tokenRecord) {
-        this.logger.info('Verification token not found', { token });
-        this.emitTyped('TOKEN_NOT_FOUND', 'Verification token not found');
+        const message = 'Verification failed: Token not found.';
+        this.logger.warn!(message);
+
+        this.emitOutput('TOKEN_NOT_FOUND', 'Invalid or expired verification link.');
         return;
       }
 
+      this.logger.debug(`Found token record.`, {
+        tokenId: tokenRecord.id,
+        userId: tokenRecord.userId
+      });
+
+      // Check token type
       if (tokenRecord.type !== TokenType.VERIFICATION) {
-        this.logger.info('Invalid token type for verification', { tokenId: tokenRecord.id, type: tokenRecord.type });
-        this.emitTyped('TOKEN_NOT_FOUND', 'Invalid token for verification');
+        const message = `Verification failed: Invalid token type provided. Expected VERIFICATION, got ${tokenRecord.type}.`;
+        this.logger.warn!(message, { tokenId: tokenRecord.id });
+
+        this.emitOutput('TOKEN_NOT_FOUND', 'Invalid or expired verification link.');
         return;
       }
 
-      if (new Date() > tokenRecord.expiresAt) {
-        this.logger.info('Verification token expired', { tokenId: tokenRecord.id, userId: tokenRecord.userId });
-        this.emitTyped('TOKEN_EXPIRED', 'Verification token has expired');
+      if (tokenRecord.expiresAt.getTime() < Date.now()) {
+        const message = `Verification failed: Token expired.`;
+        this.logger.warn!(message, { tokenId: tokenRecord.id, expiresAt: tokenRecord.expiresAt });
+
+        await this.tokenRepository.delete(tokenRecord.id!);
+        this.logger.debug('Deleted expired verification token.', { tokenId: tokenRecord.id });
+        this.emitOutput(
+          'TOKEN_EXPIRED',
+          'Verification link has expired. Please request a new one.'
+        );
         return;
       }
 
+      this.logger.debug(`Attempting to find user associated with token: ${tokenRecord.userId}`);
       const user = await this.userRepository.findById(tokenRecord.userId);
 
       if (!user) {
-        this.logger.info('User not found for verification token', { tokenId: tokenRecord.id, userId: tokenRecord.userId });
-        this.emitTyped('USER_NOT_FOUND', 'User not found for this verification token');
+        const message = `Verification failed: User not found for token.`;
+        this.logger.error(message, { tokenId: tokenRecord.id, userId: tokenRecord.userId });
+
+        await this.tokenRepository.delete(tokenRecord.id!);
+        this.logger.debug('Deleted orphaned verification token.', { tokenId: tokenRecord.id });
+
+        this.emitOutput('USER_NOT_FOUND', 'Invalid or expired verification link.');
         return;
       }
+
+      this.logger.debug(`Found user.`, { userId: user.id, isVerified: user.isVerified });
 
       if (user.isVerified) {
-        this.logger.info('User is already verified', { userId: user.id });
-        this.emitTyped('ALREADY_VERIFIED', { userId: user.id });
+        const message = `Verification skipped: User is already verified.`;
+        this.logger.info(message, { userId: user.id });
+
+        await this.tokenRepository.delete(tokenRecord.id!);
+        this.logger.debug('Deleted redundant verification token for already verified user.', {
+          tokenId: tokenRecord.id
+        });
+
+        this.emitOutput('ALREADY_VERIFIED', { userId: user.id });
         return;
       }
 
-      user.isVerified = true;
-      await this.userRepository.update(user.id, user);
+      this.logger.debug(`Updating user verification status.`, { userId: user.id });
+      await this.userRepository.update(user.id, { isVerified: true });
+      this.logger.debug(`User verification status updated successfully.`, { userId: user.id });
 
+      this.logger.debug(`Deleting used verification token.`, { tokenId: tokenRecord.id });
       await this.tokenRepository.delete(tokenRecord.id!);
+      this.logger.debug(`Verification token deleted successfully.`, { tokenId: tokenRecord.id });
 
-      this.logger.info('User email successfully verified', { userId: user.id });
-      this.emitTyped('SUCCESS', { userId: user.id });
-    } catch (error) {
-      this.logger.error('Error verifying email', {
-        error: error instanceof Error ? error.message : String(error),
-        token
+      const successPayload: VerifyEmailSuccessPayload = { userId: user.id };
+      this.logger.info(`VerifyEmail succeeded: User email verified successfully.`, {
+        userId: user.id
       });
-      this.emitTyped('ERROR', error instanceof Error ? error : new Error(String(error)));
+      this.emitSuccess(successPayload);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(
+        new OperationError(
+          'EMAIL_VERIFICATION_FAILED',
+          `Failed to process email verification request: ${err.message}`,
+          err
+        )
+      );
     }
   }
 }

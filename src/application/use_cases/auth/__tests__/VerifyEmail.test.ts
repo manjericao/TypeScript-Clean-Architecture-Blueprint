@@ -1,270 +1,536 @@
-import { VerifyEmail } from '@application/use_cases/auth';
-import { TokenType, UserRole } from '@enterprise/enum';
-import { UserResponseDTO } from '@enterprise/dto/output';
-import { v4 as uuidv4 } from 'uuid';
-import { TokenResponseDTO } from '@enterprise/dto/output';
-import { ILogger } from '@application/contracts/infrastructure';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { faker } from '@faker-js/faker';
+
+// --- Interfaces and Types to Mock ---
 import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { OperationError } from '@application/use_cases/base';
+import { TokenInputDTO } from '@enterprise/dto/input/token';
+import { TokenType, UserRole } from '@enterprise/enum';
 
-describe('VerifyEmail', () => {
-  // Mock dependencies
-  const mockUserRepository: jest.Mocked<IUserRepository> = {
-    findById: jest.fn(),
-    update: jest.fn(),
-    create: jest.fn(),
-    findByEmail: jest.fn(),
-    delete: jest.fn(),
-    findAll: jest.fn(),
-  } as unknown as jest.Mocked<IUserRepository>;
+// --- Class Under Test ---
+import { VerifyEmail } from '@application/use_cases/auth';
+import { User, Token } from '@enterprise/entities';
 
-  const mockTokenRepository: jest.Mocked<ITokenRepository> = {
-    findByToken: jest.fn(),
-    deleteByToken: jest.fn(),
-    create: jest.fn(),
-    findById: jest.fn(),
-    findByUserId: jest.fn(),
-    update: jest.fn(),
-    revoke: jest.fn(),
-    delete: jest.fn(),
-    removeExpired: jest.fn(),
-  } as unknown as jest.Mocked<ITokenRepository>;
+// --- Helper Types/Interfaces for Mocks ---
+interface MockTokenRecord extends Token {
+  id: string;
+}
 
-  const mockLogger: jest.Mocked<ILogger> = {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-  } as unknown as jest.Mocked<ILogger>;
+interface MockUser extends User {
+  id: string;
+}
 
-  let verifyEmail: VerifyEmail;
-  let mockEmitSpy: jest.SpyInstance;
+// --- Mocks ---
 
-  // Test data
-  const userId = uuidv4();
-  const tokenId = uuidv4();
-  const tokenString = 'test-verification-token';
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + 7); // 7 days from now
-  const pastDate = new Date();
-  pastDate.setDate(pastDate.getDate() - 1); // 1 day ago
+const mockUserRepository: jest.Mocked<IUserRepository> = {
+  findAll: jest.fn(),
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  findByUsername: jest.fn(),
+  findByEmailWithPassword: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
 
-  const mockUser: UserResponseDTO = {
-    id: userId,
-    email: 'test@example.com',
-    name: 'User',
-    username: 'test',
-    role: UserRole.ADMIN,
-    isVerified: false
-  };
+const mockTokenRepository: jest.Mocked<ITokenRepository> = {
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByUserId: jest.fn(),
+  findByToken: jest.fn(),
+  delete: jest.fn(),
+  update: jest.fn(),
+  revoke: jest.fn(),
+  removeExpired: jest.fn(),
+};
 
-  const mockToken: TokenResponseDTO = {
-    isExpired(): boolean {
-      return false;
-    },
-    isValid(): boolean {
-      return false;
-    },
-    id: tokenId,
+const mockLogger: jest.Mocked<ILogger> = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+// --- Helper Functions ---
+
+const createFakeVerifyData = (): TokenInputDTO => {
+  const dto = new TokenInputDTO();
+  dto.token = faker.string.alphanumeric(40); // Simulate a verification token
+  return dto;
+};
+
+const createFakeTokenRecord = (
+  userId: string,
+  token: string,
+  type: TokenType = TokenType.VERIFICATION, // Default to VERIFICATION
+  expiresInMinutes: number = 15 // Default expiry
+): MockTokenRecord => {
+  const now = new Date();
+  return {
+    id: faker.string.uuid(),
     userId: userId,
-    token: tokenString,
-    type: TokenType.VERIFICATION,
-    expiresAt: futureDate,
-    isRevoked: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
+    token: token,
+    type: type,
+    expiresAt: new Date(now.getTime() + expiresInMinutes * 60 * 1000),
+    createdAt: now,
+    updatedAt: now,
+    isRevoked: false, // Assuming not relevant for basic verify, but good to include
+    // Mocking entity methods - these won't be called by the use case directly
+    isExpired: function (): boolean {
+      return this.expiresAt.getTime() < Date.now();
+    },
+    isValid: function (): boolean {
+      return !this.isExpired() && !this.isRevoked;
+    },
   };
+};
+
+const createFakeUser = (isVerified: boolean = false, userId?: string): MockUser => ({
+  id: userId || faker.string.uuid(),
+  email: faker.internet.email(),
+  username: faker.internet.username(),
+  password: 'hashed_password', // Not directly used in VerifyEmail
+  role: faker.helpers.arrayElement(Object.values(UserRole)),
+  isVerified: isVerified, // Crucial for this use case
+  name: faker.person.fullName(),
+  // Add other User properties if they exist in your entity
+});
+
+// --- Test Suite ---
+
+describe('VerifyEmail Use Case', () => {
+  let verifyEmail: VerifyEmail;
+  let verifyData: TokenInputDTO;
+  let fakeUser: MockUser;
+  let fakeTokenRecord: MockTokenRecord;
+  const fixedTime = new Date('2024-03-10T12:00:00.000Z'); // Example fixed time
+
+  // Mock event handlers
+  let onSuccess: jest.Mock;
+  let onError: jest.Mock;
+  let onTokenNotFound: jest.Mock;
+  let onUserNotFound: jest.Mock;
+  let onTokenExpired: jest.Mock;
+  let onInvalidToken: jest.Mock; // Although code emits TOKEN_NOT_FOUND for wrong type
+  let onAlreadyVerified: jest.Mock;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    // Reset mocks before each test
+    jest.resetAllMocks();
+
+    // Use fake timers to control Date.now() for expiry checks
+    jest.useFakeTimers();
+    jest.setSystemTime(fixedTime);
+
+    // Instantiate the use case with mocks
     verifyEmail = new VerifyEmail(mockUserRepository, mockTokenRepository, mockLogger);
-    mockEmitSpy = jest.spyOn(verifyEmail as any, 'emitTyped');
+
+    // Initialize mock event handlers
+    onSuccess = jest.fn();
+    onError = jest.fn();
+    onTokenNotFound = jest.fn();
+    onUserNotFound = jest.fn();
+    onTokenExpired = jest.fn();
+    onInvalidToken = jest.fn(); // For tracking potential invalid token scenarios
+    onAlreadyVerified = jest.fn();
+
+    // Attach mock handlers to the use case instance
+    verifyEmail.on('SUCCESS', onSuccess);
+    verifyEmail.on('ERROR', onError);
+    verifyEmail.on('TOKEN_NOT_FOUND', onTokenNotFound);
+    verifyEmail.on('USER_NOT_FOUND', onUserNotFound);
+    verifyEmail.on('TOKEN_EXPIRED', onTokenExpired);
+    verifyEmail.on('INVALID_TOKEN', onInvalidToken); // Note: Code currently emits TOKEN_NOT_FOUND for invalid type
+    verifyEmail.on('ALREADY_VERIFIED', onAlreadyVerified);
+
+    // Prepare default fake data for the happy path
+    verifyData = createFakeVerifyData();
+    fakeUser = createFakeUser(false); // User is NOT verified initially
+    // Create a token that is valid by default relative to fixedTime
+    fakeTokenRecord = createFakeTokenRecord(
+      fakeUser.id,
+      verifyData.token,
+      TokenType.VERIFICATION,
+      15 // Expires 15 mins after fixedTime
+    );
   });
 
-  describe('execute', () => {
-    it('should verify user email successfully', async () => {
-      // Arrange
-      mockTokenRepository.findByToken.mockResolvedValue(mockToken);
-      mockUserRepository.findById.mockResolvedValue(mockUser);
-      mockUserRepository.update.mockResolvedValue({ ...mockUser, isVerified: true });
+  afterEach(() => {
+    // Restore real timers after each test
+    jest.useRealTimers();
+  });
 
-      // Set up event handler to verify SUCCESS event
-      const successHandler = jest.fn();
-      verifyEmail.onTyped('SUCCESS', successHandler);
+  // --- Test Cases ---
+
+  describe('execute', () => {
+    it('should emit SUCCESS when token is valid, not expired, user exists, user is not verified, and operations succeed', async () => {
+      // Arrange
+      mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+      mockUserRepository.findById.mockResolvedValue(fakeUser);
+      mockUserRepository.update.mockResolvedValue(fakeUser);
+      mockTokenRepository.delete.mockResolvedValue(undefined);
+
+      const expectedSuccessPayload = { userId: fakeUser.id };
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
-      expect(mockUserRepository.findById).toHaveBeenCalledWith(userId);
-      expect(mockUserRepository.update).toHaveBeenCalledWith(userId, { ...mockUser, isVerified: true });
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(verifyData.token);
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(fakeTokenRecord.userId);
+      expect(mockUserRepository.update).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.update).toHaveBeenCalledWith(fakeUser.id, { isVerified: true });
+      expect(mockTokenRepository.delete).toHaveBeenCalledTimes(1);
+      expect(mockTokenRepository.delete).toHaveBeenCalledWith(fakeTokenRecord.id);
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('SUCCESS', { userId });
-      expect(successHandler).toHaveBeenCalledWith({ userId });
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(expectedSuccessPayload);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onTokenNotFound).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onTokenExpired).not.toHaveBeenCalled();
+      expect(onInvalidToken).not.toHaveBeenCalled();
+      expect(onAlreadyVerified).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('User email successfully verified', { userId });
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('VerifyEmail operation started'),
+        expect.any(Object)
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith('Attempting to find verification token.');
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Found token record.',
+        expect.objectContaining({ tokenId: fakeTokenRecord.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('Attempting to find user associated with token'),
+        expect.any(String) // userId is part of the string here
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Found user.',
+        expect.objectContaining({ userId: fakeUser.id, isVerified: false })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Updating user verification status.',
+        expect.objectContaining({ userId: fakeUser.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'User verification status updated successfully.',
+        expect.objectContaining({ userId: fakeUser.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Deleting used verification token.',
+        expect.objectContaining({ tokenId: fakeTokenRecord.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Verification token deleted successfully.',
+        expect.objectContaining({ tokenId: fakeTokenRecord.id })
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('VerifyEmail succeeded'),
+        expect.objectContaining({ userId: fakeUser.id })
+      );
     });
 
-    it('should emit TOKEN_NOT_FOUND when token is not found', async () => {
+    it('should emit TOKEN_NOT_FOUND when tokenRepository.findByToken returns null', async () => {
       // Arrange
       mockTokenRepository.findByToken.mockResolvedValue(undefined);
-
-      // Set up event handler to verify TOKEN_NOT_FOUND event
-      const notFoundHandler = jest.fn();
-      verifyEmail.onTyped('TOKEN_NOT_FOUND', notFoundHandler);
+      const expectedMessage = 'Invalid or expired verification link.';
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
       expect(mockUserRepository.findById).not.toHaveBeenCalled();
       expect(mockUserRepository.update).not.toHaveBeenCalled();
+      expect(mockTokenRepository.delete).not.toHaveBeenCalled();
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('TOKEN_NOT_FOUND', 'Verification token not found');
-      expect(notFoundHandler).toHaveBeenCalledWith('Verification token not found');
+      expect(onTokenNotFound).toHaveBeenCalledTimes(1);
+      expect(onTokenNotFound).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onTokenExpired).not.toHaveBeenCalled();
+      expect(onInvalidToken).not.toHaveBeenCalled();
+      expect(onAlreadyVerified).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('Verification token not found', { token: tokenString });
+      expect(mockLogger.warn).toHaveBeenCalledWith('Verification failed: Token not found.');
     });
 
-    it('should emit TOKEN_NOT_FOUND when token type is not VERIFICATION', async () => {
+    // Note: The code emits TOKEN_NOT_FOUND for invalid type, not INVALID_TOKEN
+    it('should emit TOKEN_NOT_FOUND when the found token type is not VERIFICATION', async () => {
       // Arrange
-      const resetToken = TokenResponseDTO.fromEntity({
-        ...mockToken,
-        type: TokenType.REFRESH,
-        isExpired: mockToken.isExpired,
-        isValid: mockToken.isValid
-      });
-
-      mockTokenRepository.findByToken.mockResolvedValue(resetToken);
-
-      // Set up event handler to verify TOKEN_NOT_FOUND event
-      const notFoundHandler = jest.fn();
-      verifyEmail.onTyped('TOKEN_NOT_FOUND', notFoundHandler);
+      const wrongTypeToken = createFakeTokenRecord(
+        fakeUser.id,
+        verifyData.token,
+        TokenType.RESET_PASSWORD // Use a different type
+      );
+      mockTokenRepository.findByToken.mockResolvedValue(wrongTypeToken);
+      const expectedMessage = 'Invalid or expired verification link.';
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
       expect(mockUserRepository.findById).not.toHaveBeenCalled();
       expect(mockUserRepository.update).not.toHaveBeenCalled();
+      expect(mockTokenRepository.delete).not.toHaveBeenCalled();
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('TOKEN_NOT_FOUND', 'Invalid token for verification');
-      expect(notFoundHandler).toHaveBeenCalledWith('Invalid token for verification');
+      // Check the event actually emitted by the code
+      expect(onTokenNotFound).toHaveBeenCalledTimes(1);
+      expect(onTokenNotFound).toHaveBeenCalledWith(expectedMessage);
+      expect(onInvalidToken).not.toHaveBeenCalled(); // Should not be called based on current code
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onTokenExpired).not.toHaveBeenCalled();
+      expect(onAlreadyVerified).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('Invalid token type for verification', {
-        tokenId: resetToken.id,
-        type: resetToken.type
-      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid token type provided'),
+        expect.objectContaining({ tokenId: wrongTypeToken.id })
+      );
     });
 
-    it('should emit TOKEN_EXPIRED when token has expired', async () => {
+    it('should emit TOKEN_EXPIRED when the token expiration date is in the past and delete the token', async () => {
       // Arrange
-      const expiredToken = TokenResponseDTO.fromEntity({
-        ...mockToken,
-        expiresAt: pastDate,
-        isExpired: mockToken.isExpired,
-        isValid: mockToken.isValid
-      });
-
+      const expiredToken = createFakeTokenRecord(
+        fakeUser.id,
+        verifyData.token,
+        TokenType.VERIFICATION,
+        -5 // Expired 5 mins ago
+      );
       mockTokenRepository.findByToken.mockResolvedValue(expiredToken);
-
-      // Set up event handler to verify TOKEN_EXPIRED event
-      const expiredHandler = jest.fn();
-      verifyEmail.onTyped('TOKEN_EXPIRED', expiredHandler);
+      mockTokenRepository.delete.mockResolvedValue(undefined); // Expect delete to be called
+      const expectedMessage = 'Verification link has expired. Please request a new one.';
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
       expect(mockUserRepository.findById).not.toHaveBeenCalled();
       expect(mockUserRepository.update).not.toHaveBeenCalled();
+      expect(mockTokenRepository.delete).toHaveBeenCalledTimes(1); // Verify expired token is deleted
+      expect(mockTokenRepository.delete).toHaveBeenCalledWith(expiredToken.id);
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('TOKEN_EXPIRED', 'Verification token has expired');
-      expect(expiredHandler).toHaveBeenCalledWith('Verification token has expired');
+      expect(onTokenExpired).toHaveBeenCalledTimes(1);
+      expect(onTokenExpired).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onTokenNotFound).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onInvalidToken).not.toHaveBeenCalled();
+      expect(onAlreadyVerified).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('Verification token expired', {
-        tokenId: expiredToken.id,
-        userId: expiredToken.userId
-      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Verification failed: Token expired.',
+        expect.objectContaining({ tokenId: expiredToken.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Deleted expired verification token.',
+        expect.objectContaining({ tokenId: expiredToken.id })
+      );
     });
 
-    it('should emit USER_NOT_FOUND when user is not found', async () => {
+    it('should emit USER_NOT_FOUND when userRepository.findById returns null and delete the token', async () => {
       // Arrange
-      mockTokenRepository.findByToken.mockResolvedValue(mockToken);
-      mockUserRepository.findById.mockResolvedValue(undefined);
-
-      // Set up event handler to verify USER_NOT_FOUND event
-      const userNotFoundHandler = jest.fn();
-      verifyEmail.onTyped('USER_NOT_FOUND', userNotFoundHandler);
+      mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+      mockUserRepository.findById.mockResolvedValue(undefined); // Simulate user not found
+      mockTokenRepository.delete.mockResolvedValue(undefined); // Expect delete for orphaned token
+      const expectedMessage = 'Invalid or expired verification link.';
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
-      expect(mockUserRepository.findById).toHaveBeenCalledWith(userId);
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(fakeTokenRecord.userId);
       expect(mockUserRepository.update).not.toHaveBeenCalled();
+      expect(mockTokenRepository.delete).toHaveBeenCalledTimes(1); // Verify orphaned token is deleted
+      expect(mockTokenRepository.delete).toHaveBeenCalledWith(fakeTokenRecord.id);
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('USER_NOT_FOUND', 'User not found for this verification token');
-      expect(userNotFoundHandler).toHaveBeenCalledWith('User not found for this verification token');
+      expect(onUserNotFound).toHaveBeenCalledTimes(1);
+      expect(onUserNotFound).toHaveBeenCalledWith(expectedMessage);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onTokenNotFound).not.toHaveBeenCalled();
+      expect(onTokenExpired).not.toHaveBeenCalled();
+      expect(onInvalidToken).not.toHaveBeenCalled();
+      expect(onAlreadyVerified).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('User not found for verification token', {
-        tokenId: mockToken.id,
-        userId: mockToken.userId
-      });
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Verification failed: User not found for token.',
+        expect.objectContaining({ userId: fakeTokenRecord.userId, tokenId: fakeTokenRecord.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Deleted orphaned verification token.',
+        expect.objectContaining({ tokenId: fakeTokenRecord.id })
+      );
     });
 
-    it('should emit ALREADY_VERIFIED when user is already verified', async () => {
+    it('should emit ALREADY_VERIFIED when the user is already verified and delete the token', async () => {
       // Arrange
-      const verifiedUser = { ...mockUser, isVerified: true };
-      mockTokenRepository.findByToken.mockResolvedValue(mockToken);
+      const verifiedUser = createFakeUser(true, fakeTokenRecord.userId); // User IS verified
+      mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
       mockUserRepository.findById.mockResolvedValue(verifiedUser);
-
-      // Set up event handler to verify ALREADY_VERIFIED event
-      const alreadyVerifiedHandler = jest.fn();
-      verifyEmail.onTyped('ALREADY_VERIFIED', alreadyVerifiedHandler);
+      mockTokenRepository.delete.mockResolvedValue(undefined); // Expect delete for redundant token
+      const expectedPayload = { userId: verifiedUser.id };
 
       // Act
-      await verifyEmail.execute(tokenString);
+      await verifyEmail.execute(verifyData);
 
       // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
-      expect(mockUserRepository.findById).toHaveBeenCalledWith(userId);
-      expect(mockUserRepository.update).not.toHaveBeenCalled();
+      expect(mockTokenRepository.findByToken).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findById).toHaveBeenCalledWith(fakeTokenRecord.userId);
+      expect(mockUserRepository.update).not.toHaveBeenCalled(); // Should not update if already verified
+      expect(mockTokenRepository.delete).toHaveBeenCalledTimes(1); // Verify redundant token is deleted
+      expect(mockTokenRepository.delete).toHaveBeenCalledWith(fakeTokenRecord.id);
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('ALREADY_VERIFIED', { userId: verifiedUser.id });
-      expect(alreadyVerifiedHandler).toHaveBeenCalledWith({ userId: verifiedUser.id });
+      expect(onAlreadyVerified).toHaveBeenCalledTimes(1);
+      expect(onAlreadyVerified).toHaveBeenCalledWith(expectedPayload);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onTokenNotFound).not.toHaveBeenCalled();
+      expect(onUserNotFound).not.toHaveBeenCalled();
+      expect(onTokenExpired).not.toHaveBeenCalled();
+      expect(onInvalidToken).not.toHaveBeenCalled();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('User is already verified', { userId: verifiedUser.id });
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Verification skipped: User is already verified.',
+        expect.objectContaining({ userId: verifiedUser.id })
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'Deleted redundant verification token for already verified user.',
+        expect.objectContaining({ tokenId: fakeTokenRecord.id })
+      );
     });
 
-    it('should handle and emit errors appropriately', async () => {
-      // Arrange
-      const error = new Error('Database error');
-      mockTokenRepository.findByToken.mockRejectedValue(error);
+    // Test Error scenarios for each awaited operation
+    it.each([
+      {
+        method: 'findByToken',
+        repo: mockTokenRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {},
+      },
+      {
+        method: 'delete',
+        repo: mockTokenRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          // Setup to fail during expired token deletion
+          const expiredToken = createFakeTokenRecord(
+            fakeUser.id,
+            verifyData.token,
+            TokenType.VERIFICATION,
+            -5
+          );
+          mockTokenRepository.findByToken.mockResolvedValue(expiredToken);
+        },
+      },
+      {
+        method: 'findById',
+        repo: mockUserRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+        },
+      },
+      {
+        method: 'delete',
+        repo: mockTokenRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          // Setup to fail during orphaned token deletion
+          mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+          mockUserRepository.findById.mockResolvedValue(undefined);
+        },
+        testNameSuffix: 'after user not found', // Differentiate delete failures
+      },
+      {
+        method: 'delete',
+        repo: mockTokenRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          // Setup to fail during already verified token deletion
+          const verifiedUser = createFakeUser(true, fakeTokenRecord.userId);
+          mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+          mockUserRepository.findById.mockResolvedValue(verifiedUser);
+        },
+        testNameSuffix: 'after already verified', // Differentiate delete failures
+      },
+      {
+        method: 'update',
+        repo: mockUserRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+          mockUserRepository.findById.mockResolvedValue(fakeUser); // Unverified user
+        },
+      },
+      {
+        method: 'delete',
+        repo: mockTokenRepository,
+        errorCode: 'EMAIL_VERIFICATION_FAILED',
+        setupMocks: () => {
+          // Setup to fail during final token deletion (success path)
+          mockTokenRepository.findByToken.mockResolvedValue(fakeTokenRecord);
+          mockUserRepository.findById.mockResolvedValue(fakeUser);
+          mockUserRepository.update.mockResolvedValue(fakeUser);
+        },
+        testNameSuffix: 'after successful verification', // Differentiate delete failures
+      },
+    ])(
+      'should emit ERROR when $repo.$method throws an error $testNameSuffix',
+      async ({ method, repo, errorCode, setupMocks }) => {
+        // Arrange
+        const errorMessage = `Database error during ${method}`;
+        const dbError = new Error(errorMessage);
 
-      // Set up event handler to verify ERROR event
-      const errorHandler = jest.fn();
-      verifyEmail.onTyped('ERROR', errorHandler);
+        // Setup mocks specific to this error case
+        setupMocks();
 
-      // Act
-      await verifyEmail.execute(tokenString);
+        // Make the specific method reject
+        (repo[method as keyof typeof repo] as any).mockRejectedValue(dbError);
 
-      // Assert
-      expect(mockTokenRepository.findByToken).toHaveBeenCalledWith(tokenString);
-      expect(mockUserRepository.findById).not.toHaveBeenCalled();
-      expect(mockUserRepository.update).not.toHaveBeenCalled();
+        // Act
+        await verifyEmail.execute(verifyData);
 
-      expect(mockEmitSpy).toHaveBeenCalledWith('ERROR', error);
-      expect(errorHandler).toHaveBeenCalledWith(error);
+        // Assert
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(expect.any(OperationError));
 
-      expect(mockLogger.error).toHaveBeenCalledWith('Error verifying email', {
-        error: 'Database error',
-        token: tokenString
-      });
-    });
+        const emittedError = onError.mock.calls[0][0] as OperationError;
+        expect(emittedError.code).toBe(errorCode);
+        expect(emittedError.message).toContain('Failed to process email verification request');
+        expect(emittedError.message).toContain(errorMessage);
+        expect(emittedError.details).toBe(dbError); // Check the original error is attached
+
+        expect(onSuccess).not.toHaveBeenCalled();
+        expect(onTokenNotFound).not.toHaveBeenCalled();
+        expect(onUserNotFound).not.toHaveBeenCalled();
+        expect(onTokenExpired).not.toHaveBeenCalled();
+        expect(onInvalidToken).not.toHaveBeenCalled();
+        expect(onAlreadyVerified).not.toHaveBeenCalled();
+
+        // BaseOperation's emitError handles logging
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          expect.stringContaining(`Operation ${errorCode} failed`),
+          expect.objectContaining({
+            errorCode: errorCode,
+            errorMessage: emittedError.message,
+            errorStack: expect.any(String),
+            errorCause: dbError,
+          })
+        );
+      }
+    );
   });
 });
