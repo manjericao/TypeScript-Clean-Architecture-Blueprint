@@ -1,112 +1,126 @@
-import { Operation } from '@application/use_cases/base';
-import { ForgotPasswordEvent } from '@enterprise/events/auth';
-import { UserResponseDTO } from '@enterprise/dto/output';
 import { IEmailService } from '@application/contracts/communication/email';
 import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { IBootstrapper } from '@application/contracts/lifecycle';
+import { BaseOperationEvents, BaseOperation, OperationError } from '@application/use_cases/base';
+import { TokenResponseDTO, UserResponseDTO } from '@enterprise/dto/output';
+import { ForgotPasswordEvent } from '@enterprise/events/auth';
 
 /**
- * Interface representing the events related to sending an email when a user forgets their information.
- *
- * The `SendEmailOnForgotUserEvents` interface defines the structure of different events that can occur
- * during the process of handling a "forgot" action for user accounts. Each event is associated with a specific data structure.
- *
- * Events:
- * - `EMAIL_SENT` - Indicates a successful email sent operation. Contains the user's ID and email address.
- * - `ERROR` - Represents a generic error that occurred during the process, encapsulated as an Error object.
- * - `AVAILABILITY_ERROR` - Represents a specific error related to availability, provided as a string message.
- *
- * Extends:
- * - `Record<string, unknown>` - Allows defining additional keys beyond the predefined events.
+ * Defines the payload for the SUCCESS event upon successful email sending.
  */
-interface SendEmailOnForgotUserEvents extends Record<string, unknown> {
-  EMAIL_SENT: { userId: string; email: string };
-  ERROR: Error;
+type SendEmailSuccessPayload = {
+  userId: string;
+  email: string;
+};
+
+/**
+ * Defines the events specific to the SendEmailOnForgotPassword operation.
+ * Extends BaseOperationEvents where SUCCESS payload is SendEmailSuccessPayload
+ * and ERROR payload is OperationError.
+ * Includes specific failure cases:
+ * - AVAILABILITY_ERROR: Emitted with a string message when the email service is unavailable.
+ */
+type SendEmailOnForgotPasswordEvents = BaseOperationEvents<SendEmailSuccessPayload> & {
   AVAILABILITY_ERROR: string;
-}
+};
 
 /**
- * The SendEmailOnForgotPassword class is responsible for handling the operations
- * required to send a reset password email to users when they trigger the "Forgot Password" feature.
- * It listens for the ForgotPassword event, processes the event, and attempts to send the email.
+ * SendEmailOnForgotPassword listens for the ForgotPasswordEvent and sends a password-reset email.
+ * It verifies email service availability before attempting to send.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR, AVAILABILITY_ERROR.
+ * Implements IBootstrapper to subscribe to the domain event upon application startup.
  *
- * This class extends the Operation class and implements the IBootstrapper interface.
+ * @extends BaseOperation<SendEmailOnForgotPasswordEvents>
+ * @implements IBootstrapper
  */
-export class SendEmailOnForgotPassword extends Operation<SendEmailOnForgotUserEvents> implements IBootstrapper {
-  /**
-   * Constructs an instance of the class and initializes it with dependencies.
-   *
-   * @param {IEmailService} emailService - The email service instance used for sending emails.
-   * @param {IConfig} config - The configuration service instance for application settings.
-   * @param {ILogger} logger - The logger service instance for logging information and errors.
-   * @return {void} Does not return a value.
-   */
+export class SendEmailOnForgotPassword
+  extends BaseOperation<SendEmailOnForgotPasswordEvents>
+  implements IBootstrapper
+{
   constructor(
-    private emailService: IEmailService,
-    private config: IConfig,
-    private logger: ILogger
+    private readonly emailService: IEmailService,
+    private readonly config: IConfig,
+    readonly logger: ILogger // Logger is now managed by BaseOperation constructor
   ) {
-    super(['EMAIL_SENT', 'ERROR', 'AVAILABILITY_ERROR']);
+    // Pass all event names and the logger to the BaseOperation constructor
+    super(['SUCCESS', 'ERROR', 'AVAILABILITY_ERROR'], logger);
   }
 
   /**
-   * Initializes the process of subscribing to the 'ForgotPassword' event and handling the associated logic.
-   *
-   * The method subscribes to the 'ForgotPassword' event type and invokes the handler when the event is triggered.
-   * In case of errors during the handling process, the error is logged and emitted as output.
-   *
-   * @return {void} This method does not return any value.
+   * Subscribes to the 'ForgotPassword' domain event during application bootstrap.
+   * When the event is received, it triggers the email sending process.
    */
   public bootstrap(): void {
     this.subscribeTo<ForgotPasswordEvent>('ForgotPassword', (event) => {
-      this.handleForgotPassword(event)
-        .catch(error => {
-          this.logger.error('Error handling ForgotPassword event', {
-            error: error instanceof Error ? error.message : String(error),
-            userId: event.user.id,
-            token: event.token.token
-          });
-          this.emitOutput('ERROR', error instanceof Error ? error : new Error(String(error)));
+      this.handleForgotPassword(event).catch((error) => {
+        const operationError = new OperationError(
+          'EVENT_HANDLER_FAILED',
+          `Error handling ForgotPassword event for user ${event.user.id}`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+        this.logger.error(operationError.message, {
+          error: operationError.details,
+          userId: event.user.id,
+          token: event.token.token
         });
+      });
     });
   }
 
   /**
-   * Handles the forgot password event by preparing and sending a verification email.
-   *
-   * @param {ForgotPasswordEvent} event The event containing user and token information required to process the forgot password request.
-   * @return {Promise<void>} A promise that resolves when the email process completes successfully.
+   * Handles the incoming ForgotPasswordEvent by logging and calling the execute method.
+   * @param event - The ForgotPasswordEvent data.
    */
   private async handleForgotPassword(event: ForgotPasswordEvent): Promise<void> {
-    this.logger.info('Verification token created event received, preparing to send email', {
+    this.logger.info('ForgotPassword event received, preparing to send reset email.', {
+      operation: this.constructor.name,
       userId: event.user.id,
       tokenId: event.token.id
     });
-    await this.execute(event.user, event.token.token);
+
+    await this.execute(event.user, event.token);
   }
 
   /**
-   * Executes the process of sending a reset password email to the user.
-   * This includes verifying SMTP server availability, constructing the reset
-   * password URL, sending the email, and logging the actions.
+   * Executes the operation to send a password-reset email to the specified user.
    *
-   * @param {UserResponseDTO} user - An object containing user information, including their email address and name.
-   * @param {string} token - A token used to construct the reset password URL.
-   * @return {Promise<void>} A Promise that resolves when the process is complete.
+   * @param {UserResponseDTO} user - The user requesting a password reset, including their ID and email address.
+   * @param {TokenResponseDTO} token - The token generated for the password reset operation,
+   * including the token string.
+   * @return {Promise<void>} A promise that resolves when the operation is complete.
+   * Any errors encountered during the process are logged and emitted appropriately.
    */
-  async execute(user: UserResponseDTO, token: string): Promise<void> {
-    const { EMAIL_SENT, ERROR, AVAILABILITY_ERROR } = this.outputs;
+  async execute(user: UserResponseDTO, token: TokenResponseDTO): Promise<void> {
+    this.logger.info(`SendEmailOnForgotPassword operation started for user: ${user.id}`, {
+      operation: this.constructor.name,
+      userId: user.id,
+      email: user.email
+    });
 
     try {
+      this.logger.debug('Verifying email service availability.', {
+        operation: this.constructor.name
+      });
       const verifyEmailAvailability = await this.emailService.verify();
       if (!verifyEmailAvailability) {
-        this.emitOutput(AVAILABILITY_ERROR,
-          `There was an error with the availability of the SMTP server;
-          Try to check with the administrator of the system`);
+        const message = 'Email service is currently unavailable. Cannot send reset password email.';
+        this.logger.error(message, { operation: this.constructor.name, userId: user.id });
+
+        this.emitOutput(
+          'AVAILABILITY_ERROR',
+          'Email service unavailable. Please try again later or contact support.'
+        );
         return;
       }
+      this.logger.debug('Email service is available.', { operation: this.constructor.name });
 
-      const resetPassUrl = `${this.config.server.host}/auth/reset-pass?token=${token}`;
+      const resetPassUrl = `${this.config.server.host}/auth/reset-pass?token=${token.token}`;
+      const expiresInHours = this.config.jwt.resetPasswordExpirationMinutes / 60;
+
+      this.logger.debug(`Sending password reset email to ${user.email}.`, {
+        operation: this.constructor.name,
+        userId: user.id
+      });
 
       await this.emailService.sendEmail({
         to: user.email,
@@ -115,26 +129,26 @@ export class SendEmailOnForgotPassword extends Operation<SendEmailOnForgotUserEv
         context: {
           name: user.name,
           resetPassUrl,
-          expiresInHours: this.config.jwt.resetPasswordExpirationMinutes / 60,
+          expiresInHours,
           currentYear: new Date().getFullYear()
         }
       });
 
-      this.logger.info('Reset password email sent successfully', {
+      const successPayload: SendEmailSuccessPayload = {
         userId: user.id,
         email: user.email
-      });
+      };
 
-      this.emitOutput(EMAIL_SENT, {
-        userId: user.id,
-        email: user.email
-      });
+      this.emitSuccess(successPayload);
     } catch (error) {
-      this.logger.error('Error sending reset password email', {
-        error: error instanceof Error ? error.message : String(error),
-        userId: user.id
-      });
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emitError(
+        new OperationError(
+          'EMAIL_SEND_FAILED',
+          `Failed to send password reset email to ${user.email}: ${err.message}`,
+          err
+        )
+      );
     }
   }
 }
