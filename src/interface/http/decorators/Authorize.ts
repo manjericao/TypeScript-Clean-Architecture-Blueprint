@@ -6,12 +6,8 @@ import { UserRole } from '@enterprise/enum';
  * @param {UserRole[]} roles - An array of roles allowed to access the method.
  * @return {Function} A function that modifies the method to include role-based authorization and metadata.
  */
-export function Authorize(roles: UserRole[]) {
-  return function (
-    target: object,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
+export function Authorize(roles: UserRole[]): Function {
+  return function (target: object, propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value as (...args: unknown[]) => unknown;
 
     descriptor.value = function (...args: unknown[]) {

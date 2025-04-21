@@ -1,6 +1,7 @@
 import status from 'http-status';
-import { SuccessResponse, ErrorResponse } from '@interface/http/types/Response';
+
 import { HttpResponse } from '@interface/http/types/Http';
+import { SuccessResponse, ErrorResponse } from '@interface/http/types/Response';
 
 /**
  * BaseController is an abstract class that provides common utility methods
@@ -44,7 +45,7 @@ export abstract class BaseController {
    *
    * @param {HttpResponse} response - The HTTP response object used to send the error response.
    * @param {number} [statusCode=status.INTERNAL_SERVER_ERROR] - The HTTP status code to be sent with the error response.
-   * @return {function(unknown): void} A function that takes an error object, formats it into an error response,
+   * @return {function(unknown): void} A function that takes an error object formats it into an error response,
    * and sends it back to the client.
    */
   protected handleError(
@@ -63,16 +64,13 @@ export abstract class BaseController {
   }
 
   /**
-   * Handles a not found error by sending a standardized error response.
+   * Handles a not-found error by sending a standardized error response.
    *
    * @param {HttpResponse} response - The HTTP response object used to send the error response.
    * @param {string} [message='Resource not found'] - The error message to include in the response.
    * @return {void} This method does not return a value.
    */
-  protected handleNotFound(
-    response: HttpResponse,
-    message: string = 'Resource not found'
-  ): void {
+  protected handleNotFound(response: HttpResponse, message: string = 'Resource not found'): void {
     const errorResponse: ErrorResponse = {
       type: 'NotFoundError',
       details: null,
@@ -89,10 +87,7 @@ export abstract class BaseController {
    * @param {unknown} details - The details of the validation error to be included in the response.
    * @return {void} Does not return a value; sends an HTTP response with a validation error.
    */
-  protected handleValidationError(
-    response: HttpResponse,
-    details: unknown
-  ): void {
+  protected handleValidationError(response: HttpResponse, details: unknown): void {
     const errorResponse: ErrorResponse = {
       type: 'ValidationError',
       details,
