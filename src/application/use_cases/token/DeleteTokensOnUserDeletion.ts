@@ -1,108 +1,133 @@
-import { Operation } from '@application/use_cases/base';
-import { UserDeletedEvent } from '@enterprise/events/user';
+import { ITokenRepository } from '@application/contracts/domain/repositories';
 import { ILogger } from '@application/contracts/infrastructure';
 import { IBootstrapper } from '@application/contracts/lifecycle';
-import { ITokenRepository } from '@application/contracts/domain/repositories';
+import { BaseOperationEvents, BaseOperation, OperationError } from '@application/use_cases/base';
+import { UserDeletedEvent } from '@enterprise/events/user';
 
 /**
- * Represents the events that occur during the process of deleting tokens associated with a user.
- * This interface is intended to define constants for commonly occurring scenarios in token deletion.
- *
- * @interface
+ * Defines the payload for the SUCCESS event upon successful token deletion.
  */
-interface DeleteTokensOnUserDeletionEvents extends Record<string, unknown> {
-  TOKEN_DELETED: string;
-  TOKEN_NOT_FOUND: string;
-  ERROR: Error;
-}
+type DeleteTokensSuccessPayload = {
+  userId: string;
+  deletedCount: number;
+};
 
 /**
- * Represents an operation that listens for user deletion events and deletes all tokens
- * associated with the user upon receiving a user deletion event.
- * This operation ensures that user tokens are effectively cleaned up to maintain data security and integrity.
- * It implements the IBootstrapper interface to support initialization and listens to events via subscription.
- *
- * Extends: Operation<DeleteTokensOnUserDeletionEvents>
- * Implements: IBootstrapper
- *
- * Events:
- * - USER_DELETED: Emitted when all tokens for a user are successfully deleted.
- * - TOKEN_NOT_FOUND: Emitted if no tokens are found for a specific user.
- * - ERROR: Emitted if an error occurs during token deletion.
- *
- * Dependencies:
- * - TokenRepository: Used to query and delete tokens for a specific user.
- * - logger: Used for logging informational and error messages.
+ * Defines the payload for the TOKEN_NOT_FOUND event.
  */
-export class DeleteTokensOnUserDeletion extends Operation<DeleteTokensOnUserDeletionEvents> implements IBootstrapper{
-  /**
-   * Constructs an instance of the class.
-   *
-   * @param {ITokenRepository} TokenRepository - The repository responsible for handling token operations.
-   * @param {ILogger} logger - The logger instance for logging operations and errors.
-   */
+type TokenNotFoundPayload = {
+  userId: string;
+};
+
+/**
+ * Defines the events specific to the DeleteTokensOnUserDeletion operation.
+ * Extends BaseOperationEvents where SUCCESS payload is DeleteTokensSuccessPayload
+ * and ERROR payload is OperationError.
+ * Includes specific outcome events:
+ * - TOKEN_NOT_FOUND: Emitted with userId when no tokens are found for the user.
+ */
+type DeleteTokensOnUserDeletionEvents = BaseOperationEvents<DeleteTokensSuccessPayload> & {
+  TOKEN_NOT_FOUND: TokenNotFoundPayload;
+};
+
+/**
+ * DeleteTokensOnUserDeletion listens for the UserDeletedEvent and removes all associated tokens.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR, TOKEN_NOT_FOUND.
+ * Implements IBootstrapper to subscribe to the domain event upon application startup.
+ *
+ * @extends BaseOperation<DeleteTokensOnUserDeletionEvents>
+ * @implements IBootstrapper
+ */
+export class DeleteTokensOnUserDeletion
+  extends BaseOperation<DeleteTokensOnUserDeletionEvents>
+  implements IBootstrapper
+{
   constructor(
-    private TokenRepository: ITokenRepository,
-    private logger: ILogger
+    private readonly tokenRepository: ITokenRepository,
+    readonly logger: ILogger
   ) {
-    super(['TOKEN_DELETED', 'TOKEN_NOT_FOUND', 'ERROR']);
+    super(['SUCCESS', 'ERROR', 'TOKEN_NOT_FOUND'], logger);
   }
 
   /**
-   * Initializes the process of subscribing to the 'UserDeleted' event.
-   * When the event is received, it triggers the handling of the user deletion logic.
-   * Logs appropriate messages for successful handling or errors.
-   *
-   * @return {void} Does not return a value.
+   * Subscribes to the 'UserDeleted' domain event during application bootstrap.
    */
   public bootstrap(): void {
     this.subscribeTo<UserDeletedEvent>('UserDeleted', (event) => {
-      this.logger.info("Handling UserDeleted event in DeleteTokensOnUserCreation");
-      this.handleUserDeletion(event)
-        .catch(error => {
-          this.logger.error('Error handling UserDeleted event', {
-            error: error instanceof Error ? error.message : String(error),
-            userId: event.userId
-          });
-          this.emitOutput('ERROR', error instanceof Error ? error : new Error(String(error)));
+      this.logger.info(`Handling UserDeleted event in ${this.constructor.name}`, {
+        operation: this.constructor.name,
+        userId: event.userId
+      });
+
+      this.handleUserDeletion(event).catch((error) => {
+        const operationError = new OperationError(
+          'EVENT_HANDLER_FAILED',
+          `Error handling UserDeleted event for user ${event.userId}`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+        this.logger.error(operationError.message, {
+          operation: this.constructor.name,
+          error: operationError.details,
+          userId: event.userId
         });
+      });
     });
   }
 
   /**
-   * Handles the user deletion process by logging the event and executing related cleanup tasks, such as deleting all tokens associated with the specified user.
-   *
-   * @param {UserDeletedEvent} event - The event containing information about the user to be deleted, including the user ID.
-   * @return {Promise<void>} A promise that resolves when the user deletion process is complete.
+   * Handles the incoming UserDeletedEvent by logging and calling the execute method.
+   * @param event - The UserDeletedEvent data.
    */
   private async handleUserDeletion(event: UserDeletedEvent): Promise<void> {
-    this.logger.info('User deletion event received, deleting all tokens from user', { userId: event.userId });
+    this.logger.info('User deletion event received, preparing to delete tokens.', {
+      operation: this.constructor.name,
+      userId: event.userId
+    });
     await this.execute(event.userId);
   }
 
-  /**
-   * Executes the deletion of all tokens associated with the specified user.
-   *
-   * @param {string} userId - The ID of the user whose tokens should be deleted.
-   * @return {Promise<void>} A promise that resolves when the token deletion process completes.
-   */
   async execute(userId: string): Promise<void> {
-    const { TOKEN_DELETED, TOKEN_NOT_FOUND, ERROR } = this.outputs;
+    const operationName = this.constructor.name;
+    const context = { operation: operationName, userId: userId };
+
+    this.logger.info(`DeleteTokensOnUserDeletion operation started.`, context);
 
     try {
-      const tokensToBeDeleted = await this.TokenRepository.findByUserId(userId);
+      this.logger.debug('Attempting to find tokens for user.', context);
+      const tokensToBeDeleted = await this.tokenRepository.findByUserId(userId);
 
       if (!tokensToBeDeleted || tokensToBeDeleted.length === 0) {
-        this.emitOutput(TOKEN_NOT_FOUND, `There are no tokens for user ${userId}`);
+        const message = `No tokens found for user ${userId}. No deletion necessary.`;
+        this.logger.info(message, context);
+
+        this.emitOutput('TOKEN_NOT_FOUND', { userId });
         return;
       }
 
-      await Promise.all(tokensToBeDeleted.map(token => this.TokenRepository.delete(token.id!)));
+      this.logger.debug(`Found ${tokensToBeDeleted.length} token(s) to delete.`, {
+        ...context,
+        tokenIds: tokensToBeDeleted.map((t) => t.id)
+      });
 
-      this.emitOutput(TOKEN_DELETED, 'All tokens from the user was deleted successfully');
+      await Promise.all(tokensToBeDeleted.map((token) => this.tokenRepository.delete(token.id!)));
+
+      const successPayload: DeleteTokensSuccessPayload = {
+        userId: userId,
+        deletedCount: tokensToBeDeleted.length
+      };
+      this.logger.info(
+        `Successfully deleted ${successPayload.deletedCount} token(s) for user.`,
+        context
+      );
+      this.emitSuccess(successPayload);
     } catch (error) {
-      this.logger.error('Error creating token', { error, userId });
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      const operationError = new OperationError(
+        'TOKEN_DELETION_FAILED',
+        `Failed to delete tokens for user ${userId}: ${err.message}`,
+        err
+      );
+      this.emitError(operationError);
     }
   }
 }
