@@ -1,106 +1,113 @@
-import { Operation } from '@application/use_cases/base';
-import { UserCreatedEvent } from '@enterprise/events/user';
-import { TokenType } from '@enterprise/enum';
-import { CreateTokenDTO } from '@enterprise/dto/input/token';
-import { TokenCreatedEvent } from '@enterprise/events/token';
-import { UserResponseDTO } from '@enterprise/dto/output';
+import { ITokenRepository } from '@application/contracts/domain/repositories';
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { IBootstrapper } from '@application/contracts/lifecycle';
 import { ITokenGenerator } from '@application/contracts/security/authentication';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
-import { ITokenRepository } from '@application/contracts/domain/repositories';
+import { BaseOperation, BaseOperationEvents, OperationError } from '@application/use_cases/base';
+import { CreateTokenDTO } from '@enterprise/dto/input/token';
+import { TokenResponseDTO, UserResponseDTO } from '@enterprise/dto/output';
+import { TokenType } from '@enterprise/enum';
+import { TokenCreatedEvent } from '@enterprise/events/token';
+import { UserCreatedEvent } from '@enterprise/events/user';
 
 /**
- * Interface representing the events related to token creation during user creation processes.
- * Extends a generic record to allow additional flexible properties.
- *
- * @interface CreateTokenUserCreationEvents
- *
- * @property {Object} TOKEN_CREATED - Event triggered when a token is successfully created.
- * @property {UserResponseDTO} TOKEN_CREATED.user - Details of the user for whom the token was created.
- *
- * @property {Error} ERROR - Event triggered when an error occurs during the token creation process.
+ * Defines the payload for the SUCCESS event upon successful token creation.
+ * Contains the user and the newly created token DTO.
  */
-interface CreateTokenUserCreationEvents extends Record<string, unknown> {
-  TOKEN_CREATED: { user: UserResponseDTO };
-  ERROR: Error;
-}
+type CreateTokenSuccessPayload = {
+  user: UserResponseDTO;
+  createdToken: TokenResponseDTO;
+};
 
 /**
- * The `CreateTokenOnUserCreation` class handles the generation of a verification token
- * upon the creation of a new user. It listens to the `UserCreated` domain event and
- * triggers the process of token generation and storage, while emitting appropriate
- * outputs for success and error cases.
- *
- * This class extends the `Operation` base class to manage the flow of the operation
- * with specified output events and implements the `IBootstrapper` interface to initialize
- * the event subscription during application startup.
+ * Defines the events specific to the CreateTokenOnUserCreation operation.
+ * Extends BaseOperationEvents where SUCCESS payload is CreateTokenSuccessPayload
+ * and ERROR payload is OperationError.
  */
-export class CreateTokenOnUserCreation extends Operation<CreateTokenUserCreationEvents> implements IBootstrapper{
-  /**
-   * Constructs an instance of the class with the required dependencies.
-   *
-   * @param {ITokenRepository} TokenRepository - Repository for managing token operations.
-   * @param {ITokenGenerator} GenerateToken - Service for generating tokens.
-   * @param {IConfig} config - Configuration settings for the application.
-   * @param {ILogger} logger - Logger for logging application events and errors.
-   */
+type CreateTokenOnUserCreationEvents = BaseOperationEvents<CreateTokenSuccessPayload>;
+
+/**
+ * CreateTokenOnUserCreation listens for the UserCreatedEvent and generates
+ * a verification token for the newly created user.
+ * Extends BaseOperation to manage events: SUCCESS, ERROR.
+ * Implements IBootstrapper to subscribe to the domain event upon application startup.
+ *
+ * @extends BaseOperation<CreateTokenOnUserCreationEvents>
+ * @implements IBootstrapper
+ */
+export class CreateTokenOnUserCreation
+  extends BaseOperation<CreateTokenOnUserCreationEvents>
+  implements IBootstrapper
+{
   constructor(
-    private TokenRepository: ITokenRepository,
-    private GenerateToken: ITokenGenerator,
-    private config: IConfig,
-    private logger: ILogger
+    private readonly tokenRepository: ITokenRepository,
+    private readonly tokenGenerator: ITokenGenerator,
+    private readonly config: IConfig,
+    readonly logger: ILogger // Make logger readonly and accessible
   ) {
-    super(['TOKEN_CREATED', 'ERROR']);
+    // Pass standard events and logger to the base class constructor
+    super(['SUCCESS', 'ERROR'], logger);
   }
 
   /**
-   * Initializes subscriptions for relevant domain events and sets up appropriate handlers.
-   * Specifically, subscribes to the "UserCreated" event and processes it using the handleUserCreated method.
-   * Logs information, handles errors, and emits an "ERROR" status in case of failure during processing.
-   *
-   * @return {void} No return value.
+   * Subscribes to the 'UserCreated' domain event during application bootstrap.
    */
   public bootstrap(): void {
     this.subscribeTo<UserCreatedEvent>('UserCreated', (event) => {
-      this.logger.info("Handling UserCreated event in CreateTokenOnUserCreation");
-      this.handleUserCreated(event)
-        .catch(error => {
-          this.logger.error('Error handling UserCreated event', {
-            error: error instanceof Error ? error.message : String(error),
-            userId: event.user.id
-          });
-          this.emitOutput('ERROR', error instanceof Error ? error : new Error(String(error)));
+      this.logger.info(`Handling UserCreated event in ${this.constructor.name}`, {
+        operation: this.constructor.name,
+        userId: event.user.id
+      });
+
+      this.handleUserCreated(event).catch((error) => {
+        const operationError = new OperationError(
+          'EVENT_HANDLER_FAILED',
+          `Error handling UserCreated event for user ${event.user.id}`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+
+        this.logger.error(operationError.message, {
+          operation: this.constructor.name,
+          error: operationError.details,
+          userId: event.user.id
         });
+      });
     });
   }
 
   /**
-   * Handles the UserCreatedEvent by logging the event and performing further actions
-   * such as generating a token for the created user.
-   *
-   * @param {UserCreatedEvent} event - The event data that contains information about the created user.
-   * @return {Promise<void>} A promise that resolves once the processing of the event is complete.
+   * Handles the incoming UserCreatedEvent by logging and calling the execute method.
+   * @param event - The UserCreatedEvent data.
    */
   private async handleUserCreated(event: UserCreatedEvent): Promise<void> {
-    this.logger.info('User created event received, generating token', { userId: event.user.id });
+    this.logger.info('User created event received, preparing to create verification token.', {
+      operation: this.constructor.name,
+      userId: event.user.id
+    });
+
     await this.execute(event.user);
   }
 
   /**
-   * Executes the token creation process for a user. Generates a verification token,
-   * saves it in the repository, and triggers necessary domain events.
-   *
-   * @param {UserResponseDTO} user - The user data transfer object containing user details.
-   * @return {Promise<void>} A promise representing the completion of the token creation process.
+   * Executes the token creation logic.
+   * @param user - The UserResponseDTO for whom to create the token.
    */
   async execute(user: UserResponseDTO): Promise<void> {
-    const { TOKEN_CREATED, ERROR } = this.outputs;
+    const operationName = this.constructor.name;
+    const context = { operation: operationName, userId: user.id };
+
+    this.logger.info(`${operationName} operation started.`, context);
 
     try {
-      const expiresAt = new Date();
-      expiresAt.setHours(this.config.jwt.accessExpirationMinutes);
+      const now = new Date();
+      const expiresAt = new Date(
+        now.getTime() + this.config.jwt.accessExpirationMinutes * 60 * 1000
+      );
 
-      const tokenString = this.GenerateToken.generateToken(TokenType.VERIFICATION, this.config.jwt.accessExpirationMinutes);
+      const expirationInSeconds = this.config.jwt.accessExpirationMinutes * 60;
+      const tokenString = this.tokenGenerator.generateToken(
+        TokenType.VERIFICATION,
+        expirationInSeconds
+      );
 
       const tokenData: CreateTokenDTO = {
         userId: user.id,
@@ -110,22 +117,31 @@ export class CreateTokenOnUserCreation extends Operation<CreateTokenUserCreation
         isRevoked: false
       };
 
-      const createdToken = await this.TokenRepository.create(tokenData);
+      this.logger.debug('Attempting to create verification token in repository.', context);
+      const createdToken = await this.tokenRepository.create(tokenData);
 
-      this.logger.info('Token created successfully', {
-        userId: user.id,
+      const successPayload: CreateTokenSuccessPayload = {
+        user: user,
+        createdToken: createdToken
+      };
+
+      this.logger.info('Verification token created successfully.', {
+        ...context,
         tokenId: createdToken.id,
         tokenType: createdToken.type
       });
 
       this.publishDomainEvent(new TokenCreatedEvent(user));
 
-      this.emitOutput(TOKEN_CREATED, {
-        user
-      });
+      this.emitSuccess(successPayload);
     } catch (error) {
-      this.logger.error('Error creating token', { error, userId: user.id });
-      this.emitOutput(ERROR, error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      const operationError = new OperationError(
+        'TOKEN_CREATION_FAILED',
+        `Failed to create verification token for user ${user.id}: ${err.message}`,
+        err
+      );
+      this.emitError(operationError);
     }
   }
 }
