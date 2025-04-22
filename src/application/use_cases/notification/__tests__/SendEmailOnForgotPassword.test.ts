@@ -21,7 +21,7 @@ const mockEmailService: jest.Mocked<IEmailService> = {
 
 // Mock the nested structure of IConfig
 const mockConfig: jest.Mocked<IConfig> = {
-  env: 'test',
+  env: 'dev',
   MONGOOSE_DEBUG: false,
   jwt: {
     secret: faker.string.alphanumeric(32),
@@ -322,7 +322,6 @@ describe('SendEmailOnForgotPassword Use Case', () => {
       subscribeToSpy.mockRestore();
     });
 
-    // Example of testing the error handling within the event handler (more advanced)
     it('should log an error if handling the ForgotPassword event fails', async () => {
       // Arrange
       const eventHandlerError = new Error('Execution failed');
@@ -339,7 +338,7 @@ describe('SendEmailOnForgotPassword Use Case', () => {
         .mockImplementation((...args: unknown[]) => {
           if (args.length === 2 && typeof args[0] === 'string' && typeof args[1] === 'function') {
             const eventName = args[0] as string;
-            const handler = args[1] as (event: ForgotPasswordEvent) => void | Promise<void>; // Cast the handler
+            const handler = args[1] as (event: ForgotPasswordEvent) => void | Promise<void>;
 
             if (eventName === 'ForgotPassword') {
               process.nextTick(() => {
@@ -360,29 +359,28 @@ describe('SendEmailOnForgotPassword Use Case', () => {
           }
         });
 
+      // --- Option A: Use real timers for this test ---
+      jest.useRealTimers();
+
       // Act
       sendEmailOnForgotPassword.bootstrap();
 
-      // Need to wait for the async handler to potentially complete/fail
-      // Using Jest's modern fake timers can help manage this more deterministically
-      // Or introduce a small delay if necessary, though less ideal
-      jest.runAllTicks(); // Process the nextTick queue
+      // Wait for microtasks (setImmediate schedules callbacks outside fake timers)
+      await new Promise(resolve => setImmediate(resolve));
 
       // Assert
-      expect(executeSpy).toHaveBeenCalledWith(fakeUser, fakeToken); // Ensure execute was called
-      expect(loggerErrorSpy).toHaveBeenCalledTimes(1); // Check if logger.error was called by the catch block
+      expect(executeSpy).toHaveBeenCalledWith(fakeUser, fakeToken);
+      expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(`Error handling ForgotPassword event for user ${fakeUser.id}`),
         expect.objectContaining({
-          error: eventHandlerError, // Check if the original error is logged
+          error: eventHandlerError,
           userId: fakeUser.id
         })
       );
 
-      // Cleanup spies
       subscribeToSpy.mockRestore();
       executeSpy.mockRestore();
-      // loggerErrorSpy is a mock function, reset handled by beforeEach
     });
   });
 });
