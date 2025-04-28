@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { HttpRequest, HttpResponse, HttpNext, RequestParams } from '@interface/http/types';
+
+import { HttpRequest, HttpResponse, HttpNext, RequestParams } from 'src/interface/http/adapters';
 
 export class ExpressAdapter {
   static toHttpRequest(req: Request): HttpRequest {

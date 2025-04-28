@@ -16,7 +16,16 @@ export interface ITransformer {
    * Serializes the provided data, converting it into a format suitable for storage or transmission.
    *
    * @param {T | T[]} data - The object or array of objects to be serialized.
-   * @return {any} The serialized representation of the input data.
+   * @return {R} The serialized representation of the input data.
    */
-  serialize<T extends object>(data: T | T[]): unknown;
+  serialize<T extends object, R = string>(data: T | T[]): R;
+
+  /**
+   * Deserializes data from a storage or transmission format back into objects.
+   *
+   * @param {unknown} data - The serialized data to convert back into objects.
+   * @param {new () => T} targetClass - The class to instantiate with the deserialized data.
+   * @return {Promise<T | T[]>} A promise that resolves to the deserialized object(s).
+   */
+  deserialize<T extends object>(data: unknown, targetClass: new () => T): Promise<T | T[]>;
 }
