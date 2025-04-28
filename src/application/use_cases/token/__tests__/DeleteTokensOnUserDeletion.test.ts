@@ -42,7 +42,7 @@ const mockLogger: jest.Mocked<ILogger> = {
 
 // --- Helper Functions ---
 
-// Adjust TokenResponseDTO creation if its structure differs or needs specific types
+// Adjust TokenResponseDTO creation if its structure differs or needs specific adapters
 const createFakeTokenResponseDTO = (userId: string, type = TokenType.ACCESS): TokenResponseDTO => ({
   id: faker.string.uuid(),
   userId: userId,
@@ -81,7 +81,7 @@ describe('DeleteTokensOnUserDeletion Use Case', () => {
 
     // Prepare default fake data
     fakeUserId = faker.string.uuid();
-    // Create a mix of token types for deletion
+    // Create a mix of token adapters for deletion
     fakeTokens = [
       createFakeTokenResponseDTO(fakeUserId, TokenType.ACCESS),
       createFakeTokenResponseDTO(fakeUserId, TokenType.REFRESH),

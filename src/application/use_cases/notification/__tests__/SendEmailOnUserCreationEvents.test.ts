@@ -84,7 +84,7 @@ const createFakeEmailUserDTO = (): EmailUserDTO => ({
   email: faker.internet.email(),
 });
 
-// Adjust TokenResponseDTO creation if its structure differs or needs specific types
+// Adjust TokenResponseDTO creation if its structure differs or needs specific adapters
 const createFakeTokenResponseDTO = (userId: string, type = TokenType.VERIFICATION): TokenResponseDTO => ({
   id: faker.string.uuid(),
   userId: userId,

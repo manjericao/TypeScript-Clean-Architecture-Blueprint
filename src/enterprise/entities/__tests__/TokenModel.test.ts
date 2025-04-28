@@ -64,9 +64,9 @@ describe('Token model validation', () => {
   });
 
   /**
-   * Tests all valid token types to ensure they pass validation
+   * Tests all valid token adapters to ensure they pass validation
    */
-  it('accepts all valid token types', async () => {
+  it('accepts all valid token adapters', async () => {
     // Test each token type
     for (const tokenType of Object.values(TokenType)) {
       const token = new Token({

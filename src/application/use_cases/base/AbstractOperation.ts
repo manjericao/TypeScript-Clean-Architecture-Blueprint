@@ -11,7 +11,7 @@ import { DomainEvent } from '@enterprise/events/base';
  * communication patterns are employed.
  *
  * Type Parameters:
- * - `EventMap`: A type mapping event names to their corresponding payload types.
+ * - `EventMap`: A type mapping event names to their corresponding payload adapters.
  *
  * Key Features:
  * 1. **Instance-Level Events**:
