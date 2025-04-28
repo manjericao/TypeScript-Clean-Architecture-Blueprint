@@ -1,5 +1,5 @@
 /**
- * Represents the types of authentication tokens used in the system.
+ * Represents the adapters of authentication tokens used in the system.
  *
  * These tokens are used for different authentication and authorization purposes
  * throughout the application.

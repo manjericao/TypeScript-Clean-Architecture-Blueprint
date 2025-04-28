@@ -236,7 +236,7 @@ npm test
 # Run with coverage
 npm run test:coverage
 
-# Run specific test types
+# Run specific test adapters
 npm run test:integration
 npm run test:e2e
 ```
