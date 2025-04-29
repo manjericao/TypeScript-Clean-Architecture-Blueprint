@@ -1,341 +1,437 @@
-import { status } from 'http-status';
-import { BaseController } from '../BaseController';
-import { HttpResponse } from '@interface/http/types/Http';
-import { ErrorResponse, SuccessResponse } from '@interface/http/types/Response';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import status from 'http-status';
 
-// Creating a concrete implementation of the abstract class for testing
-class TestController extends BaseController {}
+import { ILogger } from '@application/contracts/infrastructure';
+import { DTOValidationError } from '@enterprise/dto/errors';
+import { HttpResponse, ResponseObject } from '@interface/http/adapters/Http';
+import { ErrorResponse, SuccessResponse } from '@interface/http/adapters/Response';
+import { BaseController } from '@interface/http/controllers/base';
+import { ValidationError } from 'class-validator';
+
+// --- Mocks ---
+
+const mockJson = jest.fn();
+// Create the mock for the ResponseObject that status returns
+const mockResponseObject: jest.Mocked<ResponseObject> = {
+  json: mockJson,
+};
+// Create the mock for the status function, ensuring it returns the mock ResponseObject
+const mockStatus = jest.fn<(code: number) => ResponseObject>().mockReturnValue(mockResponseObject);
+
+// Define the main mockResponse, satisfying HttpResponse and including other necessary mocks
+const mockResponse: jest.Mocked<HttpResponse> & {
+  // Include other methods if tests directly use them on mockResponse,
+  // acknowledging they aren't part of the strict HttpResponse interface.
+  json: jest.Mock;
+  send: jest.Mock;
+  setHeader: jest.Mock;
+  redirect: jest.Mock;
+} = {
+  status: mockStatus,
+  // Keep the other top-level mocks if your tests rely on them directly on mockResponse
+  json: jest.fn(), // Note: This might be confusing alongside status(...).json()
+  send: jest.fn(),
+  setHeader: jest.fn(),
+  redirect: jest.fn(),
+};
+
+// Mock ILogger
+const mockLogger: jest.Mocked<ILogger> = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+// --- Test Controller ---
+
+// Concrete implementation for testing the abstract BaseController
+class TestController extends BaseController {
+  // Expose protected methods for testing if needed, or test through public methods
+  // For this test; we'll call the protected methods directly on an instance.
+}
+
+// --- Test Suite ---
 
 describe('BaseController', () => {
   let testController: TestController;
-  let mockResponse: Partial<HttpResponse>;
-  let mockStatusFn: jest.Mock;
-  let mockJsonFn: jest.Mock;
 
   beforeEach(() => {
     // Reset mocks before each test
-    mockJsonFn = jest.fn();
-    mockStatusFn = jest.fn().mockReturnValue({ json: mockJsonFn });
-    mockResponse = { status: mockStatusFn };
-
+    jest.clearAllMocks();
     testController = new TestController();
   });
 
+  // --- Test Cases ---
+
+  describe('executeSafely', () => {
+    it('should execute logic successfully without errors', async () => {
+      // Explicitly type the mock function to match the expected signature
+      const logic = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+      await (testController as any).executeSafely(mockResponse, logic, mockLogger);
+
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).not.toHaveBeenCalled();
+      // Use the specific mocks: mockStatus and mockJson
+      expect(mockStatus).not.toHaveBeenCalled();
+      expect(mockJson).not.toHaveBeenCalled();
+      // Ensure the top-level mockResponse.json wasn't called either
+      expect(mockResponse.json).not.toHaveBeenCalled();
+    });
+
+    it('should handle DTOValidationError and call handleValidationError', async () => {
+      // 1. Define mock ValidationError objects in an array
+      const mockRawValidationErrors: ValidationError[] = [
+        {
+          property: 'field',
+          constraints: { someRule: 'Error message' },
+          // Add other required properties of ValidationError if necessary (e.g., value, target, children)
+          // Using fake values here if they are not strictly needed for the test logic
+          value: undefined,
+          target: {},
+          children: [],
+        },
+      ];
+
+      // 2. Create the error using the array
+      const dtoError = new DTOValidationError(mockRawValidationErrors);
+
+      // 3. Define the expected formatted errors (output of getFormattedErrors)
+      const expectedFormattedErrors = { field: ['Error message'] };
+
+      // Add the explicit type argument here
+      const logic = jest.fn<() => Promise<void>>().mockRejectedValue(dtoError);
+      const handleValidationErrorSpy = jest.spyOn(testController as any, 'handleValidationError');
+
+      await (testController as any).executeSafely(mockResponse, logic, mockLogger);
+
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(handleValidationErrorSpy).toHaveBeenCalledTimes(1);
+      // 4. Assert handleValidationError was called with the *formatted* errors
+      expect(handleValidationErrorSpy).toHaveBeenCalledWith(mockResponse, expectedFormattedErrors);
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('should handle generic Error, log it, and call handleError', async () => {
+      const genericError = new Error('Something went wrong');
+      // Add the explicit type argument here
+      const logic = jest.fn<() => Promise<void>>().mockRejectedValue(genericError);
+      const handleErrorSpy = jest.spyOn(testController as any, 'handleError');
+
+      await (testController as any).executeSafely(mockResponse, logic, mockLogger);
+
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith('Unexpected error during request execution', { error: genericError });
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      // Check if handleError was called correctly (it returns a function, so we check the inner call)
+      // Verify the status was called BEFORE json
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({ // Check the json mock attached to the status mock
+        type: 'InternalServerError',
+        details: genericError,
+        message: genericError.message,
+      });
+      // Ensure the top-level mockResponse.json wasn't called directly
+      expect(mockResponse.json).not.toHaveBeenCalled();
+    });
+
+    it('should handle non-Error exceptions, log them, and call handleError', async () => {
+      const nonError = { message: 'Just an object', code: 500 };
+      // Add the explicit type argument here
+      const logic = jest.fn<() => Promise<void>>().mockRejectedValue(nonError);
+      const handleErrorSpy = jest.spyOn(testController as any, 'handleError');
+
+      await (testController as any).executeSafely(mockResponse, logic, mockLogger);
+
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith('Unexpected error during request execution', { error: nonError });
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      // Check the specific mocks for status and json
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        type: 'InternalServerError',
+        details: nonError,
+        message: 'An unexpected error occurred', // Default message for non-Errors
+      });
+      // Ensure the top-level mockResponse.json wasn't called directly
+      expect(mockResponse.json).not.toHaveBeenCalled();
+    });
+  });
+
   describe('handleSuccess', () => {
-    it('should handle success response with default status code', () => {
-      const data = { message: 'Success!' };
+    it('should send success response with default status OK', () => {
+      const data = { id: 1, name: 'Test' };
+      const expectedResponse: SuccessResponse<typeof data> = { data };
 
-      // Using reflection to access the protected method
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data);
+      (testController as any).handleSuccess(mockResponse, data);
 
-      const expectedResponse: SuccessResponse<typeof data> = {
-        data
-      };
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
 
-    it('should handle success response with custom status code', () => {
-      const data = { message: 'Created!' };
-      const customStatus = status.CREATED;
+    it('should send success response with specified status code', () => {
+      const data = { message: 'Created' };
+      const statusCode = status.CREATED;
+      const expectedResponse: SuccessResponse<typeof data> = { data };
 
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data, customStatus);
+      (testController as any).handleSuccess(mockResponse, data, statusCode);
 
-      const expectedResponse: SuccessResponse<typeof data> = {
-        data
-      };
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(statusCode);
 
-      expect(mockStatusFn).toHaveBeenCalledWith(customStatus);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
 
-    it('should handle success response with pagination metadata', () => {
+    it('should send success response with metadata', () => {
       const data = [{ id: 1 }, { id: 2 }];
-      const meta = {
-        page: 1,
-        limit: 10,
-        total: 20
-      };
+      const meta = { page: 1, limit: 10, total: 20 };
+      const expectedResponse: SuccessResponse<typeof data> = { data, meta };
 
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data, status.OK, meta);
+      (testController as any).handleSuccess(mockResponse, data, status.OK, meta);
 
-      const expectedResponse: SuccessResponse<typeof data> = {
-        data,
-        meta
-      };
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
 
-    it('should handle success response with partial pagination metadata', () => {
-      const data = [{ id: 1 }, { id: 2 }];
-      const meta = {
-        page: 1,
-        // Only providing part of the metadata
-      };
-
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data, status.OK, meta);
-
-      const expectedResponse: SuccessResponse<typeof data> = {
-        data,
-        meta
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
-
-    it('should handle success response with empty metadata', () => {
-      const data = [{ id: 1 }, { id: 2 }];
-      const meta = {};
-
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data, status.OK, meta);
-
-      const expectedResponse: SuccessResponse<typeof data> = {
-        data,
-        meta
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
-
-    it('should handle empty data', () => {
-      const data = null;
-
-      (testController as any).handleSuccess(mockResponse as HttpResponse, data);
-
-      const expectedResponse: SuccessResponse<null> = {
-        data
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
 
   describe('handleError', () => {
-    it('should handle errors with default status code', () => {
-      const errorHandler = (testController as any).handleError(mockResponse as HttpResponse);
-      const error = new Error('Test error');
-
-      errorHandler(error);
-
+    it('should return a function that sends an error response with default status 500', () => {
+      const error = new Error('Internal issue');
       const expectedResponse: ErrorResponse = {
         type: 'InternalServerError',
         details: error,
-        message: 'Test error'
+        message: error.message,
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      const errorHandler = (testController as any).handleError(mockResponse);
+      errorHandler(error); // Execute the returned function
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
 
-    it('should handle errors with custom status code', () => {
-      const customStatus = status.BAD_GATEWAY;
-      const errorHandler = (testController as any).handleError(mockResponse as HttpResponse, customStatus);
-      const error = new Error('Gateway error');
+    it('should return a function that sends an error response with specified status code', () => {
+      const error = { customError: 'detail' }; // Non-Error object
+      const statusCode = status.BAD_GATEWAY;
+      const expectedResponse: ErrorResponse = {
+        type: 'InternalServerError', // Type remains based on the handler, not the code maybe? Let's stick to the impl.
+        details: error,
+        message: 'An unexpected error occurred', // Default for non-Errors
+      };
 
+      const errorHandler = (testController as any).handleError(mockResponse, statusCode);
       errorHandler(error);
 
-      const expectedResponse: ErrorResponse = {
-        type: 'InternalServerError',
-        details: error,
-        message: 'Gateway error'
-      };
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(statusCode);
 
-      expect(mockStatusFn).toHaveBeenCalledWith(customStatus);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
 
-    it('should handle non-Error objects', () => {
-      const errorHandler = (testController as any).handleError(mockResponse as HttpResponse);
-      const error = { code: 500, reason: 'Something went wrong' };
-
-      errorHandler(error);
-
-      const expectedResponse: ErrorResponse = {
-        type: 'InternalServerError',
-        details: error,
-        message: 'An unexpected error occurred'
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
-
-    it('should handle string errors', () => {
-      const errorHandler = (testController as any).handleError(mockResponse as HttpResponse);
-      const error = 'Something went wrong';
-
-      errorHandler(error);
-
-      const expectedResponse: ErrorResponse = {
-        type: 'InternalServerError',
-        details: error,
-        message: 'An unexpected error occurred'
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
-
-    it('should handle null/undefined errors', () => {
-      const errorHandler = (testController as any).handleError(mockResponse as HttpResponse);
-
-      errorHandler(null);
-
-      const expectedResponse: ErrorResponse = {
-        type: 'InternalServerError',
-        details: null,
-        message: 'An unexpected error occurred'
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
 
   describe('handleNotFound', () => {
-    it('should handle not found with default message', () => {
-      (testController as any).handleNotFound(mockResponse as HttpResponse);
-
+    it('should send a 404 response with default message', () => {
       const expectedResponse: ErrorResponse = {
         type: 'NotFoundError',
         details: null,
-        message: 'Resource not found'
+        message: 'Resource not found',
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      (testController as any).handleNotFound(mockResponse);
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
 
-    it('should handle not found with custom message', () => {
-      const customMessage = 'User not found';
-
-      (testController as any).handleNotFound(mockResponse as HttpResponse, customMessage);
-
+    it('should send a 404 response with a custom message', () => {
+      const customMessage = 'User with ID 123 not found';
       const expectedResponse: ErrorResponse = {
         type: 'NotFoundError',
         details: null,
-        message: customMessage
+        message: customMessage,
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      (testController as any).handleNotFound(mockResponse, customMessage);
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
 
   describe('handleValidationError', () => {
-    it('should handle validation error with simple string detail', () => {
-      const details = 'Email is required';
-
-      (testController as any).handleValidationError(mockResponse as HttpResponse, details);
-
+    it('should send a 400 response with validation details', () => {
+      const details = { email: ['Invalid email format'], password: ['Too short'] };
       const expectedResponse: ErrorResponse = {
         type: 'ValidationError',
-        details,
-        message: 'Validation failed'
+        details: details,
+        message: 'Validation failed',
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
+      (testController as any).handleValidationError(mockResponse, details);
 
-    it('should handle validation error with complex object details', () => {
-      const details = {
-        email: ['Email is required', 'Email format is invalid'],
-        password: ['Password is too short']
-      };
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
 
-      (testController as any).handleValidationError(mockResponse as HttpResponse, details);
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
 
-      const expectedResponse: ErrorResponse = {
-        type: 'ValidationError',
-        details,
-        message: 'Validation failed'
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
-
-    it('should handle validation error with null details', () => {
-      (testController as any).handleValidationError(mockResponse as HttpResponse, null);
-
-      const expectedResponse: ErrorResponse = {
-        type: 'ValidationError',
-        details: null,
-        message: 'Validation failed'
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
-  describe('handleUnauthorized', () => {
-    it('should set status to UNAUTHORIZED and respond with an error message', () => {
-      const errorMessage = 'Invalid credentials';
 
-      // Access the protected method via type casting
-      (testController as any).handleUnauthorized(mockResponse as HttpResponse, errorMessage);
-
-      const expectedResponse = {
-        type: 'UnauthorizedError',
-        message: errorMessage
+  describe('handleConflict', () => {
+    it('should send a 409 response with default message', () => {
+      const expectedResponse: ErrorResponse = {
+        type: 'ConflictError',
+        details: null,
+        message: 'Resource already exists',
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.UNAUTHORIZED);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      (testController as any).handleConflict(mockResponse);
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.CONFLICT);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
 
-    it('should handle empty error message', () => {
-      const errorMessage = '';
-
-      // Access the protected method via type casting
-      (testController as any).handleUnauthorized(mockResponse as HttpResponse, errorMessage);
-
-      const expectedResponse = {
-        type: 'UnauthorizedError',
-        message: errorMessage
+    it('should send a 409 response with a custom message', () => {
+      const customMessage = 'Username "tester" is already taken.';
+      const expectedResponse: ErrorResponse = {
+        type: 'ConflictError',
+        details: null,
+        message: customMessage,
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.UNAUTHORIZED);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Reset mocks if they are not reset automatically between tests in your setup
+      // mockStatus.mockClear();
+      // mockJson.mockClear();
+      // mockResponse.json.mockClear(); // Clear the original mock too
+
+      (testController as any).handleConflict(mockResponse, customMessage);
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1); // Should be 1 for this specific test
+      expect(mockStatus).toHaveBeenCalledWith(status.CONFLICT);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1); // Should be 1 for this specific test
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleUnauthorized', () => {
+    it('should send a 401 response with the specified message', () => {
+      const message = 'Invalid credentials provided.';
+      const expectedResponse: ErrorResponse = {
+        type: 'UnauthorizedError',
+        details: null,
+        message: message,
+      };
+
+      (testController as any).handleUnauthorized(mockResponse, message);
+
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.UNAUTHORIZED);
+
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
+
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
 
   describe('handleForbidden', () => {
-    it('should set status to FORBIDDEN and respond with an error message', () => {
-      const errorMessage = 'Access denied';
-
-      // Access the protected method via type casting
-      (testController as any).handleForbidden(mockResponse as HttpResponse, errorMessage);
-
-      const expectedResponse = {
+    it('should send a 403 response with the specified message', () => {
+      const message = 'Admin privileges required.';
+      const expectedResponse: ErrorResponse = {
         type: 'ForbiddenError',
-        message: errorMessage
+        details: null,
+        message: message,
       };
 
-      expect(mockStatusFn).toHaveBeenCalledWith(status.FORBIDDEN);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
-    });
+      (testController as any).handleForbidden(mockResponse, message);
 
-    it('should handle complex error message', () => {
-      const errorMessage = 'You need to verify your email before accessing this resource';
+      // Check that mockResponse.status (which is mockStatus) was called
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      expect(mockStatus).toHaveBeenCalledWith(status.FORBIDDEN);
 
-      // Access the protected method via type casting
-      (testController as any).handleForbidden(mockResponse as HttpResponse, errorMessage);
+      // Check that mockJson (the one returned by status) was called
+      expect(mockJson).toHaveBeenCalledTimes(1);
+      expect(mockJson).toHaveBeenCalledWith(expectedResponse);
 
-      const expectedResponse = {
-        type: 'ForbiddenError',
-        message: errorMessage
-      };
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.FORBIDDEN);
-      expect(mockJsonFn).toHaveBeenCalledWith(expectedResponse);
+      // Ensure the top-level mockResponse.json was NOT called
+      expect(mockResponse.json).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,21 +1,49 @@
 import status from 'http-status';
 
-import { HttpResponse } from '@interface/http/types/Http';
-import { SuccessResponse, ErrorResponse } from '@interface/http/types/Response';
+import { ILogger } from '@application/contracts/infrastructure';
+import { DTOValidationError } from '@enterprise/dto/errors';
+import { HttpResponse } from '@interface/http/adapters/Http';
+import { SuccessResponse, ErrorResponse } from '@interface/http/adapters/Response';
 
 /**
  * BaseController is an abstract class that provides common utility methods
  * to handle HTTP responses in a standardized manner, including success and
- * various types of error responses.
+ * various adapters of error responses.
  *
  * This class is designed to be extended by other controllers to provide
  * reusable response handling logic.
  */
 export abstract class BaseController {
   /**
+   * Executes the provided logic safely by handling exceptions and logging errors.
+   *
+   * @param {HttpResponse} response The response object to send appropriate error responses.
+   * @param {() => Promise<void>} logic The asynchronous logic to be executed safely.
+   * @param {ILogger} [logger] An optional logger instance for logging errors, if not injected in the constructor.
+   * @return {Promise<void>} A promise that resolves when the logic execution and error handling, if any, are completed.
+   */
+  protected async executeSafely(
+    response: HttpResponse,
+    logic: () => Promise<void>,
+    logger: ILogger
+  ): Promise<void> {
+    try {
+      await logic();
+    } catch (error: unknown) {
+      if (error instanceof DTOValidationError) {
+        this.handleValidationError(response, error.getFormattedErrors());
+      } else {
+        logger.error('Unexpected error during request execution', { error });
+        this.handleError(response)(error);
+      }
+    }
+  }
+
+  /**
    * Handles successful HTTP responses by formatting the provided data and metadata into
    * a standardized success response object and sending it to the client.
    *
+   * @template T - The type of data being returned in the response
    * @param {HttpResponse} response - The HTTP response object used to send the response.
    * @param {T} data - The data to be included in the success response.
    * @param {number} [statusCode=status.OK] - The HTTP status code for the response, defaulting to 200 (OK).
@@ -126,10 +154,12 @@ export abstract class BaseController {
    * @return {void} This method does not return any value.
    */
   protected handleUnauthorized(response: HttpResponse, message: string): void {
-    response.status(status.UNAUTHORIZED).json({
+    const errorResponse: ErrorResponse = {
       type: 'UnauthorizedError',
+      details: null,
       message
-    });
+    };
+    response.status(status.UNAUTHORIZED).json(errorResponse); // Send the standardized response
   }
 
   /**
@@ -141,9 +171,11 @@ export abstract class BaseController {
    * @return {void} Does not return a value.
    */
   protected handleForbidden(response: HttpResponse, message: string): void {
-    response.status(status.FORBIDDEN).json({
+    const errorResponse: ErrorResponse = {
       type: 'ForbiddenError',
+      details: null,
       message
-    });
+    };
+    response.status(status.FORBIDDEN).json(errorResponse); // Send the standardized response
   }
 }
