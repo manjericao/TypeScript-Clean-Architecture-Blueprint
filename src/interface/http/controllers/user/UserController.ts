@@ -1,16 +1,32 @@
 import status from 'http-status';
-import { BaseController } from '@interface/http/controllers/base';
-import { CreateUser, DeleteUser, GetAllUsers, GetUser, UpdateUser } from '@application/use_cases/user';
-import { ControllerMethod, HttpNext, HttpRequest, HttpResponse } from '@interface/http/types/Http';
-import { ITransformer } from '@interface/http/transformer';
-import { CreateUserDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
-import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
-import { DTOValidationError } from '@enterprise/dto/errors';
-import { IPasswordHasher } from '@application/contracts/security/encryption';
-import { ILogger } from '@application/contracts/infrastructure';
+
 import { IUserRepository } from '@application/contracts/domain/repositories';
+import { ILogger } from '@application/contracts/infrastructure';
+import { IPasswordHasher } from '@application/contracts/security/encryption';
+import {
+  CreateUser,
+  DeleteUser,
+  GetAllUsers,
+  GetUser,
+  UpdateUser
+} from '@application/use_cases/user';
+import {
+  CreateUserDTO,
+  UpdateUserDTO,
+  GetAllUsersInputDTO,
+  GetUserInputDTO
+} from '@enterprise/dto/input/user';
+import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
 import { UserRole } from '@enterprise/enum';
+import {
+  ControllerMethod,
+  HttpNext,
+  HttpRequest,
+  HttpResponse
+} from '@interface/http/adapters/Http';
+import { BaseController } from '@interface/http/controllers/base';
 import { Authorize } from '@interface/http/decorators';
+import { ITransformer } from 'src/application/contracts/transformer';
 
 /**
  * UserController is responsible for handling User-related HTTP requests
@@ -18,7 +34,7 @@ import { Authorize } from '@interface/http/decorators';
  * multiple components including the repository, transformer, hasher, and logger
  * to perform business logic and send the appropriate response.
  *
- * It extends BaseController and utilizes utility methods defined there for
+ * It extends BaseController and uses utility methods defined there for
  * consistent error handling, validation, and success response formatting.
  *
  * Dependencies:
@@ -40,8 +56,8 @@ export class UserController extends BaseController {
     private readonly userRepository: IUserRepository,
     private readonly transformer: ITransformer,
     private readonly passwordHasher: IPasswordHasher,
-    private readonly logger: ILogger,
-) {
+    private readonly logger: ILogger
+  ) {
     super();
   }
 
@@ -64,49 +80,33 @@ export class UserController extends BaseController {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _next: HttpNext
       ): Promise<void> => {
-        try {
-          const {
-            name, email, username, password, repeatPassword, role, birthDate, gender
-          } = request.body as {
-            name?: string; email?: string; username?: string; password?: string; repeatPassword?: string; role?: string; birthDate?: string | Date; gender?: string;
-          };
+        await this.executeSafely(
+          response,
+          async () => {
+            const userData = await CreateUserDTO.validate(request.body as Record<string, unknown>);
 
-          const userData = await CreateUserDTO.validate({
-            name, email, username, password, repeatPassword, role, birthDate, gender
-          });
+            const createUserCommand = new CreateUser(
+              this.userRepository,
+              this.passwordHasher,
+              this.logger
+            );
 
-          const createUserCommand = new CreateUser(
-            this.userRepository,
-            this.passwordHasher,
-            this.logger,
-          );
-
-          createUserCommand
-            .onTyped('SUCCESS', (user) => {
-              this.handleSuccess(
-                response,
-                this.transformer.serialize(user),
-                status.CREATED
-              );
-            })
-            .onTyped('VALIDATION_ERROR', (error) => {
+            createUserCommand.on('SUCCESS', (user) => {
+              this.handleSuccess(response, this.transformer.serialize(user), status.CREATED);
+            });
+            createUserCommand.on('VALIDATION_ERROR', (error) => {
               this.handleValidationError(response, error);
-            })
-            .onTyped('USER_EXISTS', (error) => {
+            });
+            createUserCommand.on('USER_EXISTS', (error) => {
               this.handleConflict(response, String(error));
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            createUserCommand.on('ERROR', this.handleError(response));
 
-          await createUserCommand.execute(userData);
-        } catch (error: unknown) {
-          if (error instanceof DTOValidationError) {
-            this.handleValidationError(response, error.getFormattedErrors());
-          }
-
-          this.logger.error('Unexpected error in createUser', { error });
-          this.handleError(response)(error);
-        }
-      },
+            await createUserCommand.execute(userData);
+          },
+          this.logger
+        );
+      }
     };
   }
 
@@ -126,14 +126,17 @@ export class UserController extends BaseController {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _next: HttpNext
       ): Promise<void> => {
-        try {
-          const getAllUsersCommand = new GetAllUsers(this.userRepository);
+        await this.executeSafely(
+          response,
+          async () => {
+            const page = Math.max(1, Number(request.query?.page ?? 1));
+            const limit = Math.min(100, Math.max(1, Number(request.query?.limit ?? 10)));
 
-          const page = Math.max(1, Number(request.query?.page ?? 1));
-          const limit = Math.min(100, Math.max(1, Number(request.query?.limit ?? 10)));
+            const paginationInput = await GetAllUsersInputDTO.validate({ page, limit });
 
-          getAllUsersCommand
-            .onTyped('SUCCESS', (paginatedUsers: PaginationDTO<UserResponseDTO>) => {
+            const getAllUsersCommand = new GetAllUsers(this.userRepository, this.logger);
+
+            getAllUsersCommand.on('SUCCESS', (paginatedUsers: PaginationDTO<UserResponseDTO>) => {
               this.handleSuccess(
                 response,
                 {
@@ -145,14 +148,14 @@ export class UserController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            getAllUsersCommand.on('ERROR', this.handleError(response));
 
-          await getAllUsersCommand.execute(page, limit);
-        } catch (error) {
-          this.handleError(response)(error);
-        }
-      },
+            await getAllUsersCommand.execute(paginationInput);
+          },
+          this.logger
+        );
+      }
     };
   }
 
@@ -172,33 +175,28 @@ export class UserController extends BaseController {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _next: HttpNext
       ): Promise<void> => {
-        try {
-          const getUserCommand = new GetUser(this.userRepository);
-          const { id, email } = request.params;
+        await this.executeSafely(
+          response,
+          async () => {
+            const userInput = await GetUserInputDTO.validate(
+              request.params as Record<string, unknown>
+            );
 
-          if (!id && !email) {
-            this.handleValidationError(response, 'User ID or email is required');
-            return;
-          }
+            const getUserCommand = new GetUser(this.userRepository, this.logger);
 
-          getUserCommand
-            .onTyped('SUCCESS', (user: UserResponseDTO) => {
-              this.handleSuccess(
-                response,
-                this.transformer.serialize(user),
-                status.OK
-              );
-            })
-            .onTyped('NOTFOUND_ERROR', (error) => {
-              this.handleNotFound(response, String(error));
-            })
-            .onTyped('ERROR', this.handleError(response));
+            getUserCommand.on('SUCCESS', (user: UserResponseDTO) => {
+              this.handleSuccess(response, this.transformer.serialize(user), status.OK);
+            });
+            getUserCommand.on('NOTFOUND_ERROR', (error: string | Error) => {
+              this.handleNotFound(response, error instanceof Error ? error.message : String(error));
+            });
+            getUserCommand.on('ERROR', this.handleError(response));
 
-          await getUserCommand.execute(id ?? '', email ?? '');
-        } catch (error) {
-          this.handleError(response)(error);
-        }
-      },
+            await getUserCommand.execute(userInput);
+          },
+          this.logger
+        );
+      }
     };
   }
 
@@ -217,36 +215,29 @@ export class UserController extends BaseController {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _next: HttpNext
       ): Promise<void> => {
-        try {
-          const deleteUserCommand = new DeleteUser(this.userRepository);
-          const { id } = request.params;
+        await this.executeSafely(
+          response,
+          async () => {
+            const userInput = await GetUserInputDTO.validate({ id: request.params.id } as Record<
+              string,
+              unknown
+            >);
 
-          if (!id) {
-            this.handleValidationError(response, 'User ID is required');
-            return;
-          }
+            const deleteUserCommand = new DeleteUser(this.userRepository, this.logger);
 
-          deleteUserCommand
-            .onTyped('SUCCESS', (message) => {
-              this.handleSuccess(
-                response,
-                { message },
-                status.NO_CONTENT
-              );
-            })
-            .onTyped('NOTFOUND_ERROR', (error) => {
+            deleteUserCommand.on('SUCCESS', (message) => {
+              this.handleSuccess(response, message, status.NO_CONTENT);
+            });
+            deleteUserCommand.on('NOTFOUND_ERROR', (error) => {
               this.handleNotFound(response, String(error));
-            })
-            .onTyped('VALIDATION_ERROR', (error) => {
-              this.handleValidationError(response, error);
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            deleteUserCommand.on('ERROR', this.handleError(response));
 
-          await deleteUserCommand.execute(id);
-        } catch (error) {
-          this.handleError(response)(error);
-        }
-      },
+            await deleteUserCommand.execute(userInput);
+          },
+          this.logger
+        );
+      }
     };
   }
 
@@ -268,56 +259,39 @@ export class UserController extends BaseController {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _next: HttpNext
       ): Promise<void> => {
-        try {
-          const userId = request.params.id;
+        await this.executeSafely(
+          response,
+          async () => {
+            const userInput = await GetUserInputDTO.validate({ id: request.params.id } as Record<
+              string,
+              unknown
+            >);
 
-          if (!userId) {
-            this.handleValidationError(
-              response,
-              'User ID is required'
+            const updateData = await UpdateUserDTO.validate(
+              request.body as Record<string, unknown>
             );
-            return;
-          }
 
-          const updateUserCommand = new UpdateUser(
-            this.userRepository,
-            this.logger,
-          );
+            const updateUserCommand = new UpdateUser(this.userRepository, this.logger);
 
-          const updateData = await UpdateUserDTO.validate(request.body as Record<string, unknown>);
-
-          updateUserCommand
-            .onTyped('SUCCESS', (user) => {
-              this.handleSuccess(
-                response,
-                this.transformer.serialize(user),
-                status.OK
-              );
-            })
-            .onTyped('VALIDATION_ERROR', (error) => {
-              this.handleValidationError(response, error);
-            })
-            .onTyped('USER_NOT_FOUND', (error) => {
+            updateUserCommand.on('SUCCESS', (user) => {
+              this.handleSuccess(response, this.transformer.serialize(user), status.OK);
+            });
+            updateUserCommand.on('USER_NOT_FOUND', (error) => {
               this.handleNotFound(response, String(error));
-            })
-            .onTyped('EMAIL_TAKEN', (error) => {
+            });
+            updateUserCommand.on('EMAIL_TAKEN', (error) => {
               this.handleConflict(response, String(error));
-            })
-            .onTyped('USERNAME_TAKEN', (error) => {
+            });
+            updateUserCommand.on('USERNAME_TAKEN', (error) => {
               this.handleConflict(response, String(error));
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            updateUserCommand.on('ERROR', this.handleError(response));
 
-          await updateUserCommand.execute(userId, updateData);
-        } catch (error: unknown) {
-          if (error instanceof DTOValidationError) {
-            this.handleValidationError(response, error.getFormattedErrors());
-          }
-
-          this.logger.error('Unexpected error in updateUser', { error });
-          this.handleError(response)(error);
-        }
-      },
+            await updateUserCommand.execute(userInput, updateData);
+          },
+          this.logger
+        );
+      }
     };
   }
 }
