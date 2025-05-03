@@ -29,7 +29,6 @@ describe('TokenRepositoryMongo', () => {
   };
 
   beforeAll(async () => {
-    // Start MongoDB container
     mongoContainer = await new GenericContainer('mongo:6.0')
       .withExposedPorts(27017)
       .withWaitStrategy(Wait.forLogMessage('Waiting for connections'))

@@ -35,7 +35,6 @@ describe('UserRepositoryMongo', () => {
 
   // Setup remains the same
   beforeAll(async () => {
-    // Start MongoDB container
     mongoContainer = await new GenericContainer('mongo:6.0')
       .withExposedPorts(27017)
       .withWaitStrategy(Wait.forLogMessage('Waiting for connections'))
@@ -197,7 +196,7 @@ describe('UserRepositoryMongo', () => {
       // Arrange - Create a user with isVerified explicitly set to undefined
       const createUserDTO = generateUserDTO();
 
-      // Create user model directly to bypass validation
+      // Create a user model directly to bypass validation
       const userId = uuidv4();
       const userDoc = new User({
         id: userId,
@@ -283,7 +282,6 @@ describe('UserRepositoryMongo', () => {
 
     it('should handle pagination correctly', async () => {
       // Arrange
-      // Create 15 test users
       const promises = [];
       for (let i = 0; i < 15; i++) {
         promises.push(userRepository.create({
@@ -299,7 +297,7 @@ describe('UserRepositoryMongo', () => {
 
       // Act - get the first page with 10 items
       const result1 = await userRepository.findAll(1, 10);
-      // Act - get the second page with remaining 5 items
+      // Act - get the second page with the remaining 5 items
       const result2 = await userRepository.findAll(2, 10);
 
       // Assert

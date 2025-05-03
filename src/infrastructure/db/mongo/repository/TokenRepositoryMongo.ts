@@ -1,12 +1,13 @@
 import { inject, injectable } from 'inversify';
-import { CreateTokenDTO, UpdateTokenDTO } from '@enterprise/dto/input/token';
-import { MongoTokenMapper } from '@infrastructure/db/mongo/mapper';
-import { Types } from '@interface/types';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
-import { ITokenDocument } from '@infrastructure/db/mongo/models';
-import { TokenResponseDTO } from '@enterprise/dto/output';
+
 import { ITokenRepository } from '@application/contracts/domain/repositories';
+import { CreateTokenDTO, UpdateTokenDTO } from '@enterprise/dto/input/token';
+import { TokenResponseDTO } from '@enterprise/dto/output';
+import { MongoTokenMapper } from '@infrastructure/db/mongo/mapper';
+import { ITokenDocument } from '@infrastructure/db/mongo/models';
+import { Types } from '@interface/types';
 
 @injectable()
 export class TokenRepositoryMongo implements ITokenRepository {
@@ -38,7 +39,7 @@ export class TokenRepositoryMongo implements ITokenRepository {
       expiresAt: { $gt: new Date() }
     });
 
-    return tokens.map(token => MongoTokenMapper.toDTO(token));
+    return tokens.map((token) => MongoTokenMapper.toDTO(token));
   }
 
   async findByToken(token: string): Promise<TokenResponseDTO | undefined> {
@@ -72,10 +73,7 @@ export class TokenRepositoryMongo implements ITokenRepository {
 
   async removeExpired(): Promise<number> {
     const result = await this.tokenModel.deleteMany({
-      $or: [
-        { expiresAt: { $lt: new Date() } },
-        { isRevoked: true }
-      ]
+      $or: [{ expiresAt: { $lt: new Date() } }, { isRevoked: true }]
     });
 
     return result.deletedCount;

@@ -1,21 +1,28 @@
 import path from 'path';
-import express, { Router } from 'express';
-import favicon from 'serve-favicon';
-import actuator from 'express-actuator';
-import cookieParser from 'cookie-parser';
+
 import compress from 'compression';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import express, { Router } from 'express';
+import actuator from 'express-actuator';
+import { rateLimit } from 'express-rate-limit';
+import statusMonitor from 'express-status-monitor';
 import helmet from 'helmet';
 import hpp from 'hpp';
-import { register } from 'prom-client';
-import statusMonitor from 'express-status-monitor';
-import xss from 'xss-clean';
-import { rateLimit } from 'express-rate-limit';
 import { injectable, inject } from 'inversify';
-import { Types } from '@interface/types';
-import { UserModule, AuthModule } from '@infrastructure/web/routes';
-import { LoggingMiddleware,  SwaggerMiddleware,  AuthMiddleware, ErrorMiddleware } from '@infrastructure/web/middleware';
+import { register } from 'prom-client';
+import favicon from 'serve-favicon';
+import xss from 'xss-clean';
+
 import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import {
+  LoggingMiddleware,
+  SwaggerMiddleware,
+  AuthMiddleware,
+  ErrorMiddleware
+} from '@infrastructure/web/middleware';
+import { UserModule, AuthModule } from '@infrastructure/web/routes';
+import { Types } from '@interface/types';
 
 @injectable()
 export class RouterFactory {

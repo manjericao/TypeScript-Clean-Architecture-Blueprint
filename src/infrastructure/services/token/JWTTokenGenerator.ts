@@ -1,15 +1,14 @@
 import { inject, injectable } from 'inversify';
 import { sign, verify } from 'jsonwebtoken';
+
+import { IConfig } from '@application/contracts/infrastructure';
+import { IJWTTokenGenerator } from '@application/contracts/security/authentication';
 import { TokenType } from '@enterprise/enum';
 import { Types } from '@interface/types';
-import { IJWTTokenGenerator } from '@application/contracts/security/authentication';
-import { IConfig } from '@application/contracts/infrastructure';
 
 @injectable()
 export class JWTTokenGenerator implements IJWTTokenGenerator {
-  constructor(
-    @inject(Types.Config) private readonly config: IConfig
-  ) {}
+  constructor(@inject(Types.Config) private readonly config: IConfig) {}
 
   generateJWTToken(
     payload: Record<string, unknown>,
@@ -23,9 +22,8 @@ export class JWTTokenGenerator implements IJWTTokenGenerator {
       },
       this.config.jwt.secret,
       {
-        expiresIn: type === TokenType.REFRESH
-          ? expiresInMinutes * 24 * 60 * 60
-          : expiresInMinutes * 60
+        expiresIn:
+          type === TokenType.REFRESH ? expiresInMinutes * 24 * 60 * 60 : expiresInMinutes * 60
       }
     );
   }
@@ -50,4 +48,3 @@ export class JWTTokenGenerator implements IJWTTokenGenerator {
     }
   }
 }
-

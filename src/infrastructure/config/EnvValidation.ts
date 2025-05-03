@@ -1,4 +1,3 @@
-// src/infrastructure/config/env.validation.ts
 import { z } from 'zod';
 
 export const envSchema = z.object({
@@ -24,7 +23,7 @@ export const envSchema = z.object({
   BUCKET_NAME: z.string().optional(),
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
-  AWS_DEFAULT_REGION: z.string().optional(),
+  AWS_DEFAULT_REGION: z.string().optional()
 });
 
 export type EnvVars = z.infer<typeof envSchema>;

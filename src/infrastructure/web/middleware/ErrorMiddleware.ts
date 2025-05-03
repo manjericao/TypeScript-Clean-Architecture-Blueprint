@@ -1,7 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import status from 'http-status';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { inject, injectable } from 'inversify';
+
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { IExpressMiddleware } from '@infrastructure/web/middleware/IExpressMiddleware';
 import { Types } from '@interface/types';
 
@@ -14,7 +15,7 @@ export class ErrorMiddleware implements IExpressMiddleware {
 
   public handle(
     first: Error,
-    second: Request,
+    _second: Request,
     third: Response,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _fourth: NextFunction
@@ -33,6 +34,7 @@ export class ErrorMiddleware implements IExpressMiddleware {
   }
 
   public asMiddleware(): express.ErrorRequestHandler {
-    return (err, req, res, next) => this.handle(err, req, res, next);
+    return (err: Error, req: Request, res: Response, next: NextFunction) =>
+      this.handle(err, req, res, next);
   }
 }

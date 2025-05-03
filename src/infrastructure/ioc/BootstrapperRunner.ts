@@ -1,15 +1,17 @@
 import { ServiceIdentifier } from 'inversify';
+
+import { IBootstrapper } from '@application/contracts/lifecycle';
 import { container } from '@infrastructure/ioc/Container';
 import { Types } from '@interface/types';
-import { IBootstrapper } from '@application/contracts/lifecycle';
 
 /**
- * Executes all registered bootstrappers. Each bootstrapper is retrieved
- * from the dependency injection container and its `bootstrap` method
- * is invoked asynchronously. This ensures initialization processes
- * defined in bootstrappers are executed.
+ * Executes all registered bootstraps.
+ * Each bootstrapper is retrieved from the dependency injection container, and its `bootstrap` method
+ * is invoked asynchronously.
+ * This ensures initialization processes
+ * defined in bootstraps are executed.
  *
- * @return {Promise<void>} A promise that resolves when all bootstrappers have been executed successfully.
+ * @return {Promise<void>} A promise that resolves when all bootstraps have been executed successfully.
  */
 export async function runBootstrappers(): Promise<void> {
   const bootstrappers = container.getAll<IBootstrapper>(

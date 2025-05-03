@@ -1,7 +1,6 @@
+import { CreateUserDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
+import { UserResponseDTO } from '@enterprise/dto/output';
 import { IUserDocument } from '@infrastructure/db/mongo/models/UserMongo';
-import { UserResponseDTO } from '@enterprise/dto/output/UserResponseDTO';
-import { CreateUserDTO } from '@enterprise/dto/input/user/CreateUserDTO';
-import { UpdateUserDTO } from '@enterprise/dto/input/user/UpdateUserDTO';
 
 export class MongoUserMapper {
   static toDTO(doc: IUserDocument): UserResponseDTO {

@@ -1,9 +1,10 @@
-import { inject, injectable } from 'inversify';
 import { Router, Request, Response, NextFunction } from 'express';
-import { Types } from '@interface/types';
-import { AuthController } from '@interface/http/controllers/auth';
+import { inject, injectable } from 'inversify';
+
 import { ExpressAdapter } from '@infrastructure/web/adapters';
 import { AuthMiddleware } from '@infrastructure/web/middleware';
+import { AuthController } from '@interface/http/controllers/auth';
+import { Types } from '@interface/types';
 
 @injectable()
 export class AuthModule {
@@ -59,14 +60,15 @@ export class AuthModule {
      *       500:
      *         description: Server error
      */
-    router.get(
-      '/verify-email',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.authController.verifyEmail()._verifyEmail(
+    router.get('/verify-email', (req: Request, res: Response, next: NextFunction) =>
+      this.authController
+        .verifyEmail()
+        ._verifyEmail(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     /**
@@ -115,14 +117,15 @@ export class AuthModule {
      *       500:
      *         description: Server error
      */
-    router.post(
-      '/login',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.authController.login()._login(
+    router.post('/login', (req: Request, res: Response, next: NextFunction) =>
+      this.authController
+        .login()
+        ._login(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     /**
@@ -166,11 +169,14 @@ export class AuthModule {
       '/logout',
       this.authMiddleware.asMiddleware(),
       (req: Request, res: Response, next: NextFunction) =>
-        this.authController.logout()._logout(
-          ExpressAdapter.toHttpRequest(req),
-          ExpressAdapter.toHttpResponse(res),
-          ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        this.authController
+          .logout()
+          ._logout(
+            ExpressAdapter.toHttpRequest(req),
+            ExpressAdapter.toHttpResponse(res),
+            ExpressAdapter.toHttpNext(next)
+          )
+          .catch(next)
     );
 
     /**
@@ -210,14 +216,15 @@ export class AuthModule {
      *       500:
      *         description: Server error.
      */
-    router.post(
-      '/forgot-password',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.authController.forgotPassword()._forgotPassword(
+    router.post('/forgot-password', (req: Request, res: Response, next: NextFunction) =>
+      this.authController
+        .forgotPassword()
+        ._forgotPassword(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     /**
@@ -261,14 +268,15 @@ export class AuthModule {
      *       500:
      *         description: Server error.
      */
-    router.post(
-      '/reset-password',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.authController.resetPassword()._resetPassword(
+    router.post('/reset-password', (req: Request, res: Response, next: NextFunction) =>
+      this.authController
+        .resetPassword()
+        ._resetPassword(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     /**
@@ -309,14 +317,15 @@ export class AuthModule {
      *       500:
      *         description: Server error
      */
-    router.post(
-      '/send-verification-email',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.authController.sendEmailOnUserCreation()._sendEmailOnUserCreation(
+    router.post('/send-verification-email', (req: Request, res: Response, next: NextFunction) =>
+      this.authController
+        .sendEmailOnUserCreation()
+        ._sendEmailOnUserCreation(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     return router;

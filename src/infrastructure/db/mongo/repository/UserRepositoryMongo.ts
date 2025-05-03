@@ -1,20 +1,18 @@
 import { inject, injectable } from 'inversify';
-import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
-import { MongoUserMapper } from '@infrastructure/db/mongo/mapper';
-import { CreateUserDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
-import { Types } from '@interface/types';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
-import { IUserDocument } from '@infrastructure/db/mongo/models';
-import { UserWithPasswordDTO } from '@enterprise/dto/internal';
+
 import { IUserRepository } from '@application/contracts/domain/repositories';
+import { CreateUserDTO, UpdateUserDTO } from '@enterprise/dto/input/user';
+import { UserWithPasswordDTO } from '@enterprise/dto/internal';
+import { PaginationDTO, UserResponseDTO } from '@enterprise/dto/output';
+import { MongoUserMapper } from '@infrastructure/db/mongo/mapper';
+import { IUserDocument } from '@infrastructure/db/mongo/models';
+import { Types } from '@interface/types';
 
 @injectable()
 export class UserRepositoryMongo implements IUserRepository {
-  constructor(
-    @inject(Types.UserModel) private readonly userModel: mongoose.Model<IUserDocument>
-  ) {}
-
+  constructor(@inject(Types.UserModel) private readonly userModel: mongoose.Model<IUserDocument>) {}
 
   async create(createUserDTO: CreateUserDTO): Promise<UserResponseDTO> {
     const userId = uuidv4();
@@ -62,18 +60,14 @@ export class UserRepositoryMongo implements IUserRepository {
   async findAll(page: number, limit: number): Promise<PaginationDTO<UserResponseDTO>> {
     const skip = (page - 1) * limit;
     const [users, total] = await Promise.all([
-      this.userModel
-        .find()
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      this.userModel.find().skip(skip).limit(limit).lean(),
       this.userModel.countDocuments()
     ]);
 
     const last_page = Math.ceil(total / limit);
 
     return {
-      body: users.map(user => MongoUserMapper.toDTO(user)),
+      body: users.map((user) => MongoUserMapper.toDTO(user)),
       page,
       limit,
       total,

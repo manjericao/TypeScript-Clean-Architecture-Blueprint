@@ -1,14 +1,14 @@
-// src/infrastructure/web/middleware/AuthorizationMiddleware.ts
-import { injectable } from 'inversify';
 import express, { NextFunction, Request, Response } from 'express';
+import status from 'http-status';
+import { injectable } from 'inversify';
+
 import { IAuthorizationMiddleware } from '@application/contracts/security/authorization';
 import { UserRole } from '@enterprise/enum';
-import status from 'http-status';
 import { IExpressMiddleware } from '@infrastructure/web/middleware/IExpressMiddleware';
 
 @injectable()
 export class AuthorizationMiddleware implements IAuthorizationMiddleware, IExpressMiddleware {
-  public handle(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  public handle(_req: express.Request, _res: express.Response, next: express.NextFunction): void {
     next();
   }
 

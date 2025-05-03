@@ -1,10 +1,10 @@
 import { inject, injectable } from 'inversify';
 import { Redis } from 'ioredis';
-import { Types } from '@interface/types';
-import { RedisConnection } from '@infrastructure/db/redis/redisdb';
-import { ITokenBlackList } from '@application/contracts/security/authentication';
-import { ILogger } from '@application/contracts/infrastructure';
 
+import { ILogger } from '@application/contracts/infrastructure';
+import { ITokenBlackList } from '@application/contracts/security/authentication';
+import { RedisConnection } from '@infrastructure/db/redis/redisdb';
+import { Types } from '@interface/types';
 
 @injectable()
 export class TokenBlackList implements ITokenBlackList {
@@ -15,12 +15,12 @@ export class TokenBlackList implements ITokenBlackList {
     @inject(Types.RedisConnection) redisConnection: RedisConnection,
     @inject(Types.Logger) private readonly logger: ILogger
   ) {
-    // Cast the database connection to Redis client
+    // Cast the database connection to a Redis client
     this.redisClient = redisConnection.getClient();
   }
 
   /**
-   * Adds a token to the blacklist with a specified expiration time.
+   * Adds a token to the blocklist with a specified expiration time.
    *
    * @param {string} token - The token to be blacklisted
    * @param {number} expirationTime - Time in minutes for token expiration
@@ -34,7 +34,9 @@ export class TokenBlackList implements ITokenBlackList {
       // Store token in Redis with expiration
       await this.redisClient.setex(key, expirationSeconds, 'blacklisted');
 
-      this.logger.info(`Token successfully blacklisted with expiration of ${expirationTime} minutes`);
+      this.logger.info(
+        `Token successfully blacklisted with expiration of ${expirationTime} minutes`
+      );
     } catch (error) {
       this.logger.error('Error adding token to blacklist:', error);
       throw new Error('Failed to blacklist token');
@@ -45,7 +47,7 @@ export class TokenBlackList implements ITokenBlackList {
    * Checks if a token is blacklisted
    *
    * @param {string} token - The token to check
-   * @returns {Promise<boolean>} - True if token is blacklisted, false otherwise
+   * @returns {Promise<boolean>} - True if token is blocklisted, false otherwise
    */
   async isBlackListed(token: string): Promise<boolean> {
     try {
@@ -60,7 +62,7 @@ export class TokenBlackList implements ITokenBlackList {
   }
 
   /**
-   * Generates a Redis key for the blacklisted token
+   * Generates a Redis key for the blocklisted token
    *
    * @private
    * @param {string} token - The token to generate a key for

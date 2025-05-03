@@ -1,10 +1,11 @@
-import { injectable, inject } from 'inversify';
-import swaggerUi from 'swagger-ui-express';
-import swaggerJsdoc from 'swagger-jsdoc';
 import express, { Router } from 'express';
-import { Types } from '@interface/types';
+import { injectable, inject } from 'inversify';
+import swaggerJsdoc from 'swagger-jsdoc';
+import swaggerUi from 'swagger-ui-express';
+
 import { SwaggerOptionsProvider } from '@infrastructure/web/docs';
 import { IExpressMiddleware } from '@infrastructure/web/middleware/IExpressMiddleware';
+import { Types } from '@interface/types';
 
 @injectable()
 export class SwaggerMiddleware implements IExpressMiddleware {
@@ -12,7 +13,11 @@ export class SwaggerMiddleware implements IExpressMiddleware {
     @inject(Types.SwaggerOptionsProvider) private swaggerOptionsProvider: SwaggerOptionsProvider
   ) {}
 
-  public async handle(request: express.Request, response: express.Response, next: express.NextFunction): Promise<void> {
+  public async handle(
+    request: express.Request,
+    response: express.Response,
+    next: express.NextFunction
+  ): Promise<void> {
     const formatError = (err: unknown): Error => {
       if (err instanceof Error) return err;
       if (typeof err === 'string') return new Error(err);

@@ -9,7 +9,6 @@ yarn-error.log
 !.env*.example
 
 # Code coverage
-docs
 logs
 coverage
 /tmp/

@@ -1,7 +1,8 @@
 import { inject, injectable } from 'inversify';
 import Redis, { RedisOptions } from 'ioredis';
-import { Types } from '@interface/types';
+
 import { IConfig, IDatabase, ILogger } from '@application/contracts/infrastructure';
+import { Types } from '@interface/types';
 
 interface RedisClient extends Redis {
   ping(): Promise<'PONG'>;
@@ -9,7 +10,7 @@ interface RedisClient extends Redis {
 }
 
 type RedisEvents = {
-  on(event: 'error', listener: (error: Error) => void): Redis  ;
+  on(event: 'error', listener: (error: Error) => void): Redis;
   on(event: 'connect' | 'ready' | 'close' | 'reconnecting', listener: () => void): Redis;
 };
 
@@ -30,7 +31,6 @@ export class RedisConnection implements IDatabase {
       }
     };
 
-
     this.client = new Redis(redisOptions) as RedisClient;
     this.setupEventHandlers();
   }
@@ -42,7 +42,9 @@ export class RedisConnection implements IDatabase {
     });
 
     (this.client as RedisEvents).on('connect', () => {
-      this.logger.info(`Redis connection established to ${this.config.redis.host}:${this.config.redis.port}`);
+      this.logger.info(
+        `Redis connection established to ${this.config.redis.host}:${this.config.redis.port}`
+      );
     });
 
     (this.client as RedisEvents).on('ready', () => {

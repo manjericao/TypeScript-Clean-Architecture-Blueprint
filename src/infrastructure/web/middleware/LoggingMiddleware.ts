@@ -1,9 +1,10 @@
-import morgan, { StreamOptions } from 'morgan';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import express from 'express';
 import { inject, injectable } from 'inversify';
+import morgan, { StreamOptions } from 'morgan';
+
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { IExpressMiddleware } from '@infrastructure/web/middleware/IExpressMiddleware';
 import { Types } from '@interface/types';
-import express from 'express';
 
 @injectable()
 export class LoggingMiddleware implements IExpressMiddleware {

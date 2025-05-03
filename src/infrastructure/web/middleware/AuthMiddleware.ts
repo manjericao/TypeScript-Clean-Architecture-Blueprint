@@ -1,14 +1,14 @@
-import { inject, injectable } from 'inversify';
 import express, { NextFunction, Request, Response } from 'express';
-import { Types } from '@interface/types';
-import passport from 'passport';
 import status from 'http-status';
+import { inject, injectable } from 'inversify';
+import passport from 'passport';
 import { Strategy as JwtStrategy, ExtractJwt, StrategyOptions } from 'passport-jwt';
+
+import { IUserRepository } from '@application/contracts/domain/repositories';
 import { IConfig } from '@application/contracts/infrastructure';
 import { ITokenBlackList } from '@application/contracts/security/authentication';
-import { IUserRepository } from '@application/contracts/domain/repositories';
-import { IExpressMiddleware } from '@infrastructure/web/middleware/IExpressMiddleware';
 import { IAuthMiddleware } from '@infrastructure/web/middleware/IAuthMiddleware';
+import { Types } from '@interface/types';
 
 interface JwtPayload {
   userId: string;
@@ -63,7 +63,7 @@ export class AuthMiddleware implements IAuthMiddleware {
         return;
       }
 
-      // Check if token is blacklisted
+      // Check if the token is blocklisted
       const isBlacklisted = await this.tokenBlackList.isBlackListed(token);
       if (isBlacklisted) {
         res.status(status.UNAUTHORIZED).json({
@@ -122,14 +122,15 @@ export class AuthMiddleware implements IAuthMiddleware {
           return done(null, false);
         }
 
-        void this.userRepository.findById(jwtPayload.userId)
-          .then(user => {
+        void this.userRepository
+          .findById(jwtPayload.userId)
+          .then((user) => {
             if (!user) {
               return done(null, false);
             }
             return done(null, user);
           })
-          .catch(error => {
+          .catch((error) => {
             return done(error, false);
           });
       })

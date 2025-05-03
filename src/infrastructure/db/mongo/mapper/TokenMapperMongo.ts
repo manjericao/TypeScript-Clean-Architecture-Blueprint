@@ -1,6 +1,6 @@
-import { ITokenDocument } from '@infrastructure/db/mongo/models';
 import { CreateTokenDTO, UpdateTokenDTO } from '@enterprise/dto/input/token';
 import { TokenResponseDTO } from '@enterprise/dto/output';
+import { ITokenDocument } from '@infrastructure/db/mongo/models';
 
 export class MongoTokenMapper {
   static toDTO(doc: ITokenDocument): TokenResponseDTO {

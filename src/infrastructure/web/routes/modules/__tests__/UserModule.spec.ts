@@ -8,7 +8,7 @@ import { faker } from '@faker-js/faker';
 import { UserModule } from '@infrastructure/web/routes';
 import { UserController } from '@interface/http/controllers/user';
 import { BaseTransformer } from '@infrastructure/services/transformer';
-import { ITransformer } from '@interface/http/transformer';
+import { ITransformer } from 'src/application/contracts/transformer';
 import { UserRole, Gender } from '@enterprise/enum';
 import { CreateUserDTO } from '@enterprise/dto/input/user';
 import { UserRepositoryMongo } from '@infrastructure/db/mongo/repository';

@@ -1,11 +1,13 @@
-import nodemailer, { Transporter } from 'nodemailer';
-import { inject, injectable } from 'inversify';
 import * as fs from 'fs';
 import * as path from 'path';
+
 import * as handlebars from 'handlebars';
-import { Types } from '@interface/types';
+import { inject, injectable } from 'inversify';
+import nodemailer, { Transporter } from 'nodemailer';
+
 import { EmailOptions, IEmailService } from '@application/contracts/communication/email';
 import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import { Types } from '@interface/types';
 
 /**
  * Email service implementation using Nodemailer
@@ -73,7 +75,7 @@ export class EmailService implements IEmailService {
     }
 
     try {
-      // Handle template rendering if template engine is configured
+      // Handle template rendering if the template engine is configured
       let html = options.html;
 
       if (options.template && options.context) {
@@ -88,7 +90,7 @@ export class EmailService implements IEmailService {
         html: html
       };
 
-      const info = await this.transporter!.sendMail(mailOptions) as { messageId: string };
+      const info = (await this.transporter!.sendMail(mailOptions)) as { messageId: string };
 
       this.logger.info('Email sent successfully', {
         messageId: info.messageId,
@@ -107,7 +109,7 @@ export class EmailService implements IEmailService {
 
       const templatePath = path.join('views', `${template}.hbs`);
 
-      // Check if template exists
+      // Check if the template exists
       if (!fs.existsSync(templatePath)) {
         this.logger.error('Email template not found', { template, path: templatePath });
         new Error(`Email template not found: ${template}`);

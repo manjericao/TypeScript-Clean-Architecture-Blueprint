@@ -1,11 +1,12 @@
-import { inject, injectable } from 'inversify';
 import { NextFunction, Request, RequestHandler, Response, Router } from 'express';
-import { Types } from '@interface/types';
-import { UserController } from '@interface/http/controllers/user';
-import { ExpressAdapter } from '@infrastructure/web/adapters';
-import { AuthMiddleware } from '@infrastructure/web/middleware';
+import { inject, injectable } from 'inversify';
+
 import { IAuthorizationMiddleware } from '@application/contracts/security/authorization';
 import { UserRole } from '@enterprise/enum';
+import { ExpressAdapter } from '@infrastructure/web/adapters';
+import { AuthMiddleware } from '@infrastructure/web/middleware';
+import { UserController } from '@interface/http/controllers/user';
+import { Types } from '@interface/types';
 
 @injectable()
 export class UserModule {
@@ -14,7 +15,8 @@ export class UserModule {
   constructor(
     @inject(Types.UserController) private readonly userController: UserController,
     @inject(Types.AuthMiddleware) private readonly authMiddleware: AuthMiddleware,
-    @inject(Types.AuthorizationMiddleware) private readonly authorizationMiddleware: IAuthorizationMiddleware
+    @inject(Types.AuthorizationMiddleware)
+    private readonly authorizationMiddleware: IAuthorizationMiddleware
   ) {
     this._router = this.configureRouter();
   }
@@ -56,14 +58,15 @@ export class UserModule {
      *       500:
      *         description: Server error
      */
-    router.post(
-      '/',
-      (req: Request, res: Response, next: NextFunction) =>
-        this.userController.createUser()._createUser(
+    router.post('/', (req: Request, res: Response, next: NextFunction) =>
+      this.userController
+        .createUser()
+        ._createUser(
           ExpressAdapter.toHttpRequest(req),
           ExpressAdapter.toHttpResponse(res),
           ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        )
+        .catch(next)
     );
 
     /**
@@ -74,7 +77,7 @@ export class UserModule {
      *     tags: [User]
      *     security:
      *       - bearerAuth: []
-     *     description: Retrieves a paginated list of all users. Requires ADMIN or USER role.
+     *     description: Retrieves a paginated list of all users.
      *     parameters:
      *       - in: query
      *         name: page
@@ -122,11 +125,14 @@ export class UserModule {
       this.authMiddleware.asMiddleware(),
       this.authorizationMiddleware.requireRoles([UserRole.ADMIN, UserRole.USER]) as RequestHandler,
       (req: Request, res: Response, next: NextFunction) =>
-        this.userController.getAllUsers()._getAllUsers(
-          ExpressAdapter.toHttpRequest(req),
-          ExpressAdapter.toHttpResponse(res),
-          ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        this.userController
+          .getAllUsers()
+          ._getAllUsers(
+            ExpressAdapter.toHttpRequest(req),
+            ExpressAdapter.toHttpResponse(res),
+            ExpressAdapter.toHttpNext(next)
+          )
+          .catch(next)
     );
 
     /**
@@ -168,11 +174,14 @@ export class UserModule {
       this.authMiddleware.asMiddleware(),
       this.authorizationMiddleware.requireRoles([UserRole.ADMIN, UserRole.USER]) as RequestHandler,
       (req: Request, res: Response, next: NextFunction) =>
-        this.userController.getUser()._getUser(
-          ExpressAdapter.toHttpRequest(req),
-          ExpressAdapter.toHttpResponse(res),
-          ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        this.userController
+          .getUser()
+          ._getUser(
+            ExpressAdapter.toHttpRequest(req),
+            ExpressAdapter.toHttpResponse(res),
+            ExpressAdapter.toHttpNext(next)
+          )
+          .catch(next)
     );
 
     /**
@@ -210,11 +219,14 @@ export class UserModule {
       this.authMiddleware.asMiddleware(),
       this.authorizationMiddleware.requireRoles([UserRole.ADMIN]) as RequestHandler,
       (req: Request, res: Response, next: NextFunction) =>
-        this.userController.removeUser()._removeUser(
-          ExpressAdapter.toHttpRequest(req),
-          ExpressAdapter.toHttpResponse(res),
-          ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        this.userController
+          .removeUser()
+          ._removeUser(
+            ExpressAdapter.toHttpRequest(req),
+            ExpressAdapter.toHttpResponse(res),
+            ExpressAdapter.toHttpNext(next)
+          )
+          .catch(next)
     );
 
     /**
@@ -225,7 +237,7 @@ export class UserModule {
      *     tags: [User]
      *     security:
      *       - bearerAuth: []
-     *     description: Updates a user with the provided information. Requires ADMIN role.
+     *     description: Updates a user with the provided information, requires an ADMIN role.
      *     parameters:
      *       - in: path
      *         name: id
@@ -278,11 +290,14 @@ export class UserModule {
       this.authMiddleware.asMiddleware(),
       this.authorizationMiddleware.requireRoles([UserRole.ADMIN]) as RequestHandler,
       (req: Request, res: Response, next: NextFunction) =>
-        this.userController.updateUser()._updateUser(
-          ExpressAdapter.toHttpRequest(req),
-          ExpressAdapter.toHttpResponse(res),
-          ExpressAdapter.toHttpNext(next)
-        ).catch(next)
+        this.userController
+          .updateUser()
+          ._updateUser(
+            ExpressAdapter.toHttpRequest(req),
+            ExpressAdapter.toHttpResponse(res),
+            ExpressAdapter.toHttpNext(next)
+          )
+          .catch(next)
     );
 
     return router;

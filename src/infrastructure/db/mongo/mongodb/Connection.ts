@@ -1,8 +1,10 @@
+import { inspect } from 'util';
+
 import { inject, injectable } from 'inversify';
 import mongoose from 'mongoose';
-import { inspect } from 'util';
-import { Types } from '@interface/types';
+
 import { IConfig, IDatabase, ILogger } from '@application/contracts/infrastructure';
+import { Types } from '@interface/types';
 
 @injectable()
 export class MongoDBConnection implements IDatabase {
@@ -19,9 +21,12 @@ export class MongoDBConnection implements IDatabase {
 
   private setupDebug(): void {
     if (this.config.MONGOOSE_DEBUG) {
-      mongoose.set('debug', (collectionName: string, method: string, query: unknown, doc: unknown) => {
-        this.logger.info(`${collectionName}.${method}`, inspect(query, false, 20), doc);
-      });
+      mongoose.set(
+        'debug',
+        (collectionName: string, method: string, query: unknown, doc: unknown) => {
+          this.logger.info(`${collectionName}.${method}`, inspect(query, false, 20), doc);
+        }
+      );
     }
   }
 

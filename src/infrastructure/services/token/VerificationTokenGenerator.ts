@@ -1,16 +1,15 @@
-import { inject, injectable } from 'inversify';
-import { TokenType } from '@enterprise/enum';
 import { createHash, randomBytes } from 'crypto';
-import { Types } from '@interface/types';
-import { ITokenGenerator } from '@application/contracts/security/authentication';
+
+import { inject, injectable } from 'inversify';
+
 import { IConfig } from '@application/contracts/infrastructure';
+import { ITokenGenerator } from '@application/contracts/security/authentication';
+import { TokenType } from '@enterprise/enum';
+import { Types } from '@interface/types';
 
 @injectable()
 export class VerificationTokenGenerator implements ITokenGenerator {
-  constructor(
-    @inject(Types.Config) private readonly config: IConfig
-  ) {
-  }
+  constructor(@inject(Types.Config) private readonly config: IConfig) {}
 
   generateToken(
     type: TokenType,
@@ -21,26 +20,18 @@ export class VerificationTokenGenerator implements ITokenGenerator {
       throw new Error('This generator only supports verification tokens');
     }
 
-    // Create a timestamp that will be used for expiration
-    const timestamp = Date.now() + (expiresIn * 1000);
+    const timestamp = Date.now() + expiresIn * 1000;
 
-    // Generate random bytes for uniqueness
     const randomString = randomBytes(32).toString('hex');
 
-    // Combine payload data into a string with type checking
     const payloadString = Object.entries(payload)
       .map(([key, value]) => `${key}:${this.formatValue(value)}`)
       .join('|');
 
-    // Create the base string to hash
     const baseString = `${randomString}|${timestamp}|${payloadString}|${this.config.jwt.secret}`;
 
-    // Create hash of the base string
-    const hash = createHash('sha256')
-      .update(baseString)
-      .digest('hex');
+    const hash = createHash('sha256').update(baseString).digest('hex');
 
-    // Combine timestamp, payload identifier and hash into the final token
     return Buffer.from(
       JSON.stringify({
         t: timestamp,
@@ -51,7 +42,7 @@ export class VerificationTokenGenerator implements ITokenGenerator {
   }
 
   validateToken(
-    token: string,
+    _token: string,
     type: TokenType
   ): Promise<{ valid: boolean; payload?: Record<string, unknown> }> {
     if (type !== TokenType.VERIFICATION) {
