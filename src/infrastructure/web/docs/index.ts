@@ -1,0 +1,1 @@
+export { SwaggerOptionsProvider } from './Swagger';
