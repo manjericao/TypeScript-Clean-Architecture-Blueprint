@@ -1,1550 +1,1050 @@
-import { status } from 'http-status';
-import { AuthController } from '../AuthController';
-import { VerifyEmail, LoginUser, LogoutUser, ForgotPassword, ResetPassword } from '@application/use_cases/auth';
-import { SendEmailOnUserCreation } from '@application/use_cases/notification';
-import { HttpRequest, HttpResponse } from '@interface/http/types/Http';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { faker } from '@faker-js/faker';
-import { UserRole } from '@enterprise/enum';
+import status from 'http-status';
+
+// --- Application Layer Mocks ---
 import { IEmailService } from '@application/contracts/communication/email';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import {
+  IJWTTokenGenerator,
+  ITokenBlackList,
+  ITokenGenerator
+} from '@application/contracts/security/authentication';
+import { IPasswordHasher } from '@application/contracts/security/encryption';
+import {
+  ForgotPassword,
+  LoginUser,
+  LogoutUser,
+  VerifyEmail,
+  ResetPassword
+} from '@application/use_cases/auth';
+import { SendEmailOnUserCreation } from '@application/use_cases/notification';
 
-jest.mock('@application/use_cases/auth/VerifyEmail');
-jest.mock('@application/use_cases/auth/LoginUser');
-jest.mock('@application/use_cases/auth/LogoutUser');
-jest.mock('@application/use_cases/auth/ForgotPassword');
-jest.mock('@application/use_cases/auth/ResetPassword');
-jest.mock('@application/use_cases/notification/SendEmailOnUserCreation');
+// --- Enterprise Layer Mocks ---
+import {
+  AuthenticateUserDTO,
+  EmailUserDTO,
+  LogoutRequestDTO,
+  ResetPasswordDTO
+} from '@enterprise/dto/input/auth';
+import { TokenInputDTO } from '@enterprise/dto/input/token';
 
+// --- Interface Layer ---
+import {
+  HttpRequest,
+  HttpResponse,
+  HttpNext,
+  ResponseObject,
+  ControllerMethod
+} from '@interface/http/adapters/Http';
+import { AuthController } from '@interface/http/controllers/auth/AuthController';
+import { ValidationError } from 'class-validator';
+import { DTOValidationError } from '@enterprise/dto/errors';
+
+// --- Mock Use Cases ---
+// Store listeners and allow triggering them from mock executing
+type EventListener = (...args: any[]) => void;
+type Listeners = { [key: string]: EventListener };
+
+const mockUseCase = (events: string[]) => {
+  const listeners: Listeners = {};
+  return {
+    on: jest.fn((event: string, listener: EventListener) => {
+      if (events.includes(event)) {
+        listeners[event] = listener;
+      }
+    }),
+    execute: jest.fn(async (..._args: any[]) => {
+      // This mock executing needs to be configured per test
+      // to call the appropriate listener (e.g., listeners['SUCCESS'](mockData))
+    }),
+    // Helper to trigger events from tests
+    __trigger: (event: string, ...args: any[]) => {
+      if (listeners[event]) {
+        listeners[event](...args);
+      } else {
+        // Optional: throw an error if trying to trigger an unlistened event
+        // console.warn(`Mock UseCase: Event "${event}" has no listener.`);
+      }
+    }
+  };
+};
+
+// Mock the actual use case classes
+jest.mock('@application/use_cases/auth', () => ({
+  VerifyEmail: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'TOKEN_NOT_FOUND', 'USER_NOT_FOUND', 'TOKEN_EXPIRED', 'ALREADY_VERIFIED', 'ERROR'])),
+  LoginUser: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'USER_NOT_FOUND', 'INVALID_CREDENTIALS', 'ACCOUNT_NOT_VERIFIED', 'ERROR'])),
+  LogoutUser: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'INVALID_TOKEN', 'ERROR'])),
+  ForgotPassword: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'USER_NOT_FOUND', 'ACCOUNT_NOT_VERIFIED', 'ERROR'])),
+  ResetPassword: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'TOKEN_NOT_FOUND', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'ERROR']))
+}));
+
+jest.mock('@application/use_cases/notification', () => ({
+  SendEmailOnUserCreation: jest.fn().mockImplementation(() =>
+    mockUseCase(['SUCCESS', 'USER_ALREADY_VERIFIED', 'USER_NOT_FOUND', 'AVAILABILITY_ERROR', 'ERROR']))
+}));
+
+// Mock DTO static validate methods
+jest.mock('@enterprise/dto/input/auth', () => ({
+  AuthenticateUserDTO: {
+    validate: jest.fn<(data: Record<string, unknown>) => Promise<any>>()
+  },
+  EmailUserDTO: {
+    validate: jest.fn<(data: Record<string, unknown>) => Promise<any>>()
+  },
+  LogoutRequestDTO: {
+    validate: jest.fn<(data: Record<string, unknown>) => Promise<any>>()
+  },
+  ResetPasswordDTO: {
+    validate: jest.fn<(data: Record<string, unknown>) => Promise<any>>()
+  }
+}));
+
+jest.mock('@enterprise/dto/input/token', () => ({
+  TokenInputDTO: {
+    validate: jest.fn<(data: Record<string, unknown>) => Promise<any>>()
+  }
+}));
+
+// --- Mock Dependencies ---
+const mockUserRepository: jest.Mocked<IUserRepository> = {
+  create: jest.fn(),
+  findAll: jest.fn(),
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  findByUsername: jest.fn(),
+  findByEmailWithPassword: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
+
+const mockTokenRepository: jest.Mocked<ITokenRepository> = {
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByUserId: jest.fn(),
+  findByToken: jest.fn(),
+  update: jest.fn(),
+  revoke: jest.fn(),
+  delete: jest.fn(),
+  removeExpired: jest.fn()
+};
+
+const mockJWTTokenGenerator: jest.Mocked<IJWTTokenGenerator> = {
+  generateJWTToken: jest.fn(),
+  validateJWTToken: jest.fn()
+};
+
+const mockTokenGenerator: jest.Mocked<ITokenGenerator> = {
+  generateToken: jest.fn(),
+  validateToken: jest.fn()
+};
+
+const mockPasswordHasher: jest.Mocked<IPasswordHasher> = {
+  hashPassword: jest.fn(),
+  comparePasswords: jest.fn(),
+};
+
+const mockLogger: jest.Mocked<ILogger> = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+const mockConfig: jest.Mocked<IConfig> = {
+  env: 'dev',
+  MONGOOSE_DEBUG: false,
+  jwt: {
+    secret: faker.string.alphanumeric(32),
+    accessExpirationMinutes: 15,
+    refreshExpirationDays: 7,
+    resetPasswordExpirationMinutes: 10,
+    verifyEmailExpirationMinutes: 60,
+  },
+  db: 'mongodb://mock-url',
+  db_config: {
+    useNewUrlParser: false,
+    useUnifiedTopology: false
+  },
+  redis: {
+    host: 'redis://mock-redis',
+    port: 2222
+  },
+  storage: {
+    type: 'local',
+    aws: {
+      bucketName: '',
+      accessKeyId: '',
+      secretAccessKey: '',
+      region: '',
+    }
+  },
+  server: {
+    protocol: '',
+    host: '',
+    port: 5555,
+    version: ''
+  },
+  smtp: {
+    host: 'mock-smtp',
+    port: 587,
+    secure: false,
+    debug: false,
+    username: '',
+    password: '',
+    from: ''
+  }
+};
+
+const mockTokenBlackList: jest.Mocked<ITokenBlackList> = {
+  addToBlackList: jest.fn(),
+  isBlackListed: jest.fn()
+};
+
+const mockEmailService: jest.Mocked<IEmailService> = {
+  sendEmail: jest.fn(),
+  verify: jest.fn()
+};
+
+// --- Mock HTTP Objects ---
+const mockJson = jest.fn();
+const mockResponseObject: jest.Mocked<ResponseObject> = {
+  json: mockJson,
+};
+const mockStatus = jest.fn<(code: number) => ResponseObject>().mockReturnValue(mockResponseObject);
+
+// Define the main mockResponse, satisfying HttpResponse
+const mockResponse: jest.Mocked<HttpResponse> = {
+  status: mockStatus,
+};
+
+const mockRequest: jest.Mocked<HttpRequest> = {
+  body: {},
+  params: {},
+  query: {},
+  headers: {},
+};
+
+const mockNext: jest.Mocked<HttpNext> = jest.fn();
+
+// Helper to create DTOValidationError
+const createDtoValidationError = (errors: { property: string; constraints: { [type: string]: string } }[]): DTOValidationError => {
+  const validationErrors: ValidationError[] = errors.map(e => ({
+    property: e.property,
+    constraints: e.constraints,
+    value: 'mockValue',
+    target: {},
+    children: [],
+  }));
+  return new DTOValidationError(validationErrors);
+};
+
+// --- Test Suite ---
 describe('AuthController', () => {
   let authController: AuthController;
-  let mockUserRepository: jest.Mocked<IUserRepository>;
-  let mockTokenRepository: jest.Mocked<ITokenRepository>;
-  let mockEmailService: jest.Mocked<IEmailService>;
-  let mockLogger: jest.Mocked<ILogger>;
-  let mockConfig: jest.Mocked<IConfig>;
-  let mockRequest: Partial<HttpRequest>;
-  let mockResponse: Partial<HttpResponse>;
-  let mockNext: jest.Mock;
-  let mockJsonFn: jest.Mock;
-  let mockStatusFn: jest.Mock;
-  let mockVerifyEmailInstance: jest.Mocked<VerifyEmail>;
-  let mockLoginUserInstance: jest.Mocked<LoginUser>;
-  let mockLogoutUserInstance: jest.Mocked<LogoutUser>;
-  let mockForgotPasswordInstance: jest.Mocked<ForgotPassword>;
-  let mockResetPasswordInstance: jest.Mocked<ResetPassword>;
-  let mockSendEmailOnUserCreationInstance: jest.Mocked<SendEmailOnUserCreation>;
-
-  const userId = faker.string.uuid();
-  const mockToken = faker.string.alphanumeric(32);
-
-  const mockAccessToken = faker.string.alphanumeric(32);
-  const mockRefreshToken = faker.string.alphanumeric(32);
-  const mockAccessExpires = new Date(Date.now() + 3600000); // 1 hour from now
-  const mockRefreshExpires = new Date(Date.now() + 2592000000);
+  let mockVerifyEmailUseCase: ReturnType<typeof mockUseCase>;
+  let mockLoginUserUseCase: ReturnType<typeof mockUseCase>;
+  let mockLogoutUserUseCase: ReturnType<typeof mockUseCase>;
+  let mockForgotPasswordUseCase: ReturnType<typeof mockUseCase>;
+  let mockResetPasswordUseCase: ReturnType<typeof mockUseCase>;
+  let mockSendEmailOnUserCreationUseCase: ReturnType<typeof mockUseCase>;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockUserRepository = {
-      findAll: jest.fn(),
-      findById: jest.fn(),
-      findByEmail: jest.fn(),
-      findByUsername: jest.fn(),
-      findByEmailWithPassword: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn()
-    };
-
-    mockTokenRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findByToken: jest.fn(),
-      update: jest.fn(),
-      revoke: jest.fn(),
-      delete: jest.fn(),
-      removeExpired: jest.fn()
-    };
-
-    mockLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      debug: jest.fn()
-    };
-
-    mockEmailService = {
-      sendEmail: jest.fn(),
-      verify: jest.fn()
-    };
-
-    mockJsonFn = jest.fn();
-    mockStatusFn = jest.fn().mockReturnValue({ json: mockJsonFn });
-    mockResponse = { status: mockStatusFn };
-    mockNext = jest.fn();
-
-    // Setup Verify Email Instance
-    mockVerifyEmailInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockReturnThis(),
-      outputs: {
-        SUCCESS: 'SUCCESS',
-        ERROR: 'ERROR',
-        TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
-        USER_NOT_FOUND: 'USER_NOT_FOUND',
-        TOKEN_EXPIRED: 'TOKEN_EXPIRED',
-        ALREADY_VERIFIED: 'ALREADY_VERIFIED'
-      }
-    } as unknown as jest.Mocked<VerifyEmail>;
-
-    (VerifyEmail as jest.MockedClass<typeof VerifyEmail>).mockImplementation(
-      () => mockVerifyEmailInstance
-    );
-
-    // Setup Login User Instance
-    mockLoginUserInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockImplementation((event, handler) => {
-        if (event === 'SUCCESS') {
-          handler({
-            userId: "68545171-f15c-4be7-bc86-2d0cd6b3114b",
-            accessToken: mockAccessToken,
-            accessTokenExpires: mockAccessExpires,
-            refreshToken: mockRefreshToken,
-            refreshTokenExpires: mockRefreshExpires
-          });
-        }
-        return mockLoginUserInstance;
-      }),
-      outputs: {
-        SUCCESS: 'SUCCESS',
-        ERROR: 'ERROR',
-        INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
-        USER_NOT_FOUND: 'USER_NOT_FOUND',
-        ACCOUNT_NOT_VERIFIED: 'ACCOUNT_NOT_VERIFIED'
-      }
-    } as unknown as jest.Mocked<LoginUser>;
-
-    // Update the LoginUser mock constructor
-    (LoginUser as jest.MockedClass<typeof LoginUser>).mockImplementation(
-      () => mockLoginUserInstance
-    );
-
-    mockConfig = {
-      env: 'test',
-      MONGOOSE_DEBUG: false,
-      jwt: {
-        secret: 'test-secret',
-        accessExpirationMinutes: 60, // 1 hour
-        refreshExpirationDays: 30,
-        resetPasswordExpirationMinutes: 10,
-        verifyEmailExpirationMinutes: 10
-      },
-      db: 'mongodb://localhost:27017/test',
-      db_config: {
-        useNewUrlParser: true,
-        useUnifiedTopology: true
-      },
-      storage: {
-        type: 'local',
-        aws: {
-          bucketName: undefined,
-          accessKeyId: undefined,
-          secretAccessKey: undefined,
-          region: undefined
-        }
-      },
-      server: {
-        protocol: 'http',
-        host: 'localhost',
-        port: 3000,
-        version: '1.0.0'
-      },
-      smtp: {
-        host: 'smtp.test.com',
-        port: 587,
-        secure: false,
-        debug: false,
-        username: 'test',
-        password: 'test',
-        from: 'test@example.com'
-      },
-      redis: {
-        host: 'localhost',
-        port: 3011
-      }
-    };
-
-    const mockGenerateToken = {
-      generateJWTToken: jest.fn().mockReturnValue('mock-token'),
-      validateJWTToken: jest.fn().mockReturnValue({ userId: 'mock-user-id' })
-    };
-
-    const mockGenerateVerificationToken = {
-      generateToken: jest.fn().mockReturnValue('mock-token'),
-      validateToken: jest.fn().mockReturnValue({ userId: 'mock-user-id' })
-    };
-
-    const mockTokenBlackList = {
-      addToBlackList: jest.fn(),
-      isBlackListed: jest.fn()
-    };
-
-    const mockPasswordHasher = {
-      hashPassword: jest.fn(),
-      comparePasswords: jest.fn()
-    };
-
-    mockLogoutUserInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockReturnThis(),
-      outputs: {
-        SUCCESS: 'SUCCESS',
-        ERROR: 'ERROR',
-        INVALID_TOKEN: 'INVALID_TOKEN'
-      }
-    } as unknown as jest.Mocked<LogoutUser>;
-
-    (LogoutUser as jest.MockedClass<typeof LogoutUser>).mockImplementation(
-      () => mockLogoutUserInstance
-    );
-
-    mockForgotPasswordInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockReturnThis(),
-      outputs: {
-        SUCCESS: 'SUCCESS',
-        ERROR: 'ERROR',
-        USER_NOT_FOUND: 'USER_NOT_FOUND',
-        ACCOUNT_NOT_VERIFIED: 'ACCOUNT_NOT_VERIFIED'
-      }
-    } as unknown as jest.Mocked<ForgotPassword>;
-
-    (ForgotPassword as jest.MockedClass<typeof ForgotPassword>).mockImplementation(
-      () => mockForgotPasswordInstance
-    );
-
-    mockResetPasswordInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockReturnThis(),
-      emitOutput: jest.fn(),
-      outputs: {
-        SUCCESS: 'SUCCESS',
-        ERROR: 'ERROR',
-        TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
-        TOKEN_EXPIRED: 'TOKEN_EXPIRED',
-        INVALID_TOKEN: 'INVALID_TOKEN'
-      }
-    } as unknown as jest.Mocked<ResetPassword>;
-
-    (ResetPassword as jest.MockedClass<typeof ResetPassword>).mockImplementation(
-      () => mockResetPasswordInstance
-    );
-
-    mockSendEmailOnUserCreationInstance = {
-      execute: jest.fn(),
-      onTyped: jest.fn().mockReturnThis(),
-      outputs: {
-        EMAIL_SENT: 'EMAIL_SENT',
-        ERROR: 'ERROR',
-        NOTFOUND_ERROR: 'NOTFOUND_ERROR',
-        AVAILABILITY_ERROR: 'AVAILABILITY_ERROR'
-      }
-    } as unknown as jest.Mocked<SendEmailOnUserCreation>;
-
-    (SendEmailOnUserCreation as jest.MockedClass<typeof SendEmailOnUserCreation>).mockImplementation(
-      () => mockSendEmailOnUserCreationInstance
-    );
-
+    // Instantiate the controller with mocks
     authController = new AuthController(
       mockUserRepository,
       mockTokenRepository,
-      mockGenerateToken,
-      mockGenerateVerificationToken,
+      mockJWTTokenGenerator,
+      mockTokenGenerator,
       mockPasswordHasher,
       mockLogger,
       mockConfig,
       mockTokenBlackList,
       mockEmailService
     );
+
+    // Get mock instances of use cases
+    mockVerifyEmailUseCase = new VerifyEmail(mockUserRepository, mockTokenRepository, mockLogger) as any;
+    mockLoginUserUseCase = new LoginUser(mockUserRepository, mockPasswordHasher, mockJWTTokenGenerator, mockConfig, mockLogger) as any;
+    mockLogoutUserUseCase = new LogoutUser(mockTokenBlackList, mockConfig, mockLogger) as any;
+    mockForgotPasswordUseCase = new ForgotPassword(mockUserRepository, mockTokenRepository, mockTokenGenerator, mockConfig, mockLogger) as any;
+    mockResetPasswordUseCase = new ResetPassword(mockUserRepository, mockTokenRepository, mockPasswordHasher, mockLogger) as any;
+    mockSendEmailOnUserCreationUseCase = new SendEmailOnUserCreation(mockTokenRepository, mockUserRepository, mockEmailService, mockConfig, mockLogger) as any;
+
+    (VerifyEmail as any).mockImplementation(() => mockVerifyEmailUseCase);
+    (LoginUser as any).mockImplementation(() => mockLoginUserUseCase);
+    (LogoutUser as any).mockImplementation(() => mockLogoutUserUseCase);
+    (ForgotPassword as any).mockImplementation(() => mockForgotPasswordUseCase);
+    (ResetPassword as any).mockImplementation(() => mockResetPasswordUseCase);
+    (SendEmailOnUserCreation as any).mockImplementation(() => mockSendEmailOnUserCreationUseCase);
+
+    // Reset request object parts
+    mockRequest.body = {};
+    mockRequest.params = {};
+    mockRequest.query = {};
+    mockRequest.headers = {};
   });
 
+  // --- Test Cases for verifyEmail ---
   describe('verifyEmail', () => {
+    let _verifyEmail: ControllerMethod;
+    let tokenData: { token: string };
+
     beforeEach(() => {
-      mockRequest = {
-        query: { token: mockToken }
+      _verifyEmail = authController.verifyEmail()._verifyEmail;
+
+      tokenData = {
+        token: faker.string.alphanumeric(32)
       };
-    });
 
-    it('should return 400 if token is missing', async () => {
-      // Arrange
-      mockRequest = { params: {} };
-      const { _verifyEmail } = authController.verifyEmail();
+      mockRequest.query = { token: tokenData.token };
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      // Mock DTO validation success by default
+      (TokenInputDTO.validate as any).mockResolvedValue(tokenData);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Verification token is required',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-      expect(mockVerifyEmailInstance.execute).not.toHaveBeenCalled();
-    });
-
-    it('should handle successful email verification', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
-
-      // Mock the success case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const successHandler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'SUCCESS'
-        )?.[1];
-
-        if (successHandler) {
-          successHandler({ userId });
-        }
-        return Promise.resolve();
-      });
-
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockVerifyEmailInstance.execute).toHaveBeenCalledWith(mockToken);
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: {
-          message: 'Email verified successfully',
-          userId: userId
-        }
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('SUCCESS', { userId: faker.string.uuid() });
       });
     });
 
-    it('should handle token not found error', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
+    it('should verify email successfully and return 200 status', async () => {
+      const userId = faker.string.uuid();
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('SUCCESS', { userId });
+      });
+
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
+
+      expect(TokenInputDTO.validate).toHaveBeenCalledWith({ token: tokenData.token });
+      expect(VerifyEmail).toHaveBeenCalledWith(mockUserRepository, mockTokenRepository, mockLogger);
+      expect(mockVerifyEmailUseCase.execute).toHaveBeenCalledWith(tokenData);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: { message: 'Email verified successfully', userId }
+      });
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('should handle token not found error and return 404 status', async () => {
       const errorMessage = 'Verification token not found';
-
-      // Mock the token not found case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const errorHandler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'TOKEN_NOT_FOUND'
-        )?.[1];
-
-        if (errorHandler) {
-          errorHandler(errorMessage);
-        }
-        return Promise.resolve();
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('TOKEN_NOT_FOUND', errorMessage);
       });
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
+        message: errorMessage,
         details: null,
-        message: 'Verification token not found',
         type: 'NotFoundError'
       });
     });
 
-    it('should handle user not found error', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
-      const errorMessage = 'User not found for this verification token';
-
-      // Mock the user not found case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const errorHandler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'USER_NOT_FOUND'
-        )?.[1];
-
-        if (errorHandler) {
-          errorHandler(errorMessage);
-        }
-        return Promise.resolve();
+    it('should handle user not found error and return 404 status', async () => {
+      const errorMessage = 'User not found';
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('USER_NOT_FOUND', errorMessage);
       });
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
+        message: errorMessage,
         details: null,
-        message: 'User not found for this verification token',
         type: 'NotFoundError'
       });
     });
 
-    it('should handle token expired error', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
+    it('should handle token expired error and return 400 status', async () => {
       const errorMessage = 'Verification token has expired';
-
-      // Mock the token expired case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const errorHandler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'TOKEN_EXPIRED'
-        )?.[1];
-
-        if (errorHandler) {
-          errorHandler(errorMessage);
-        }
-        return Promise.resolve();
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('TOKEN_EXPIRED', errorMessage);
       });
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Verification token has expired',
-        message: 'Validation failed',
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+      expect(mockJson).toHaveBeenCalledWith({
+        message: "Validation failed",
+        details: errorMessage,
         type: 'ValidationError'
       });
     });
 
-    it('should handle already verified email', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
-
-      // Mock the already verified case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const handler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'ALREADY_VERIFIED'
-        )?.[1];
-
-        if (handler) {
-          handler({ userId });
-        }
-        return Promise.resolve();
+    it('should handle already verified email and return 200 status', async () => {
+      const userId = faker.string.uuid();
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('ALREADY_VERIFIED', { userId });
       });
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: {
-          message: 'Email already verified',
-          userId: userId
-        }
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: { message: 'Email already verified', userId }
       });
     });
 
-    it('should handle general errors', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
-      const error = new Error('General error occurred');
-
-      // Mock the general error case
-      mockVerifyEmailInstance.execute.mockImplementation(() => {
-        const errorHandler = mockVerifyEmailInstance.onTyped.mock.calls.find(
-          call => call[0] === 'ERROR'
-        )?.[1];
-
-        if (errorHandler) {
-          errorHandler(error);
-        }
-        return Promise.resolve();
-      });
-
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: error,
-        message: 'General error occurred',
-        type: 'InternalServerError'
-      });
-    });
-
-    it('should handle exceptions during execution', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
+    it('should handle unexpected errors and return 500 status', async () => {
       const error = new Error('Unexpected error');
 
-      // Mock an exception being thrown
-      mockVerifyEmailInstance.execute.mockRejectedValue(error);
+      // Set up the mock implementation
+      (mockVerifyEmailUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockVerifyEmailUseCase.__trigger('ERROR', error);
+      });
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        message: error.message,
         details: error,
-        message: 'Unexpected error',
         type: 'InternalServerError'
       });
     });
 
-    it('should handle validation errors with status code', async () => {
-      // Arrange
-      const { _verifyEmail } = authController.verifyEmail();
-      const validationError = new Error('Validation failed') as Error & { statusCode: number };
-      validationError.statusCode = status.BAD_REQUEST;
+    it('should handle query parameter as array', async () => {
+      mockRequest.query = { token: [tokenData.token] };
 
-      // Mock an exception being thrown with status code
-      mockVerifyEmailInstance.execute.mockRejectedValue(validationError);
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
 
-      // Act
-      await _verifyEmail(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      expect(TokenInputDTO.validate).toHaveBeenCalledWith({ token: tokenData.token });
+    });
 
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Validation failed',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
+    it('should handle missing token in query', async () => {
+      mockRequest.query = {};
+
+      const validationError = createDtoValidationError([
+        { property: 'token', constraints: { isNotEmpty: 'token should not be empty' } }
+      ]);
+
+      (TokenInputDTO.validate as any).mockRejectedValue(validationError);
+
+      await _verifyEmail(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
     });
   });
 
+  // --- Test Cases for login ---
   describe('login', () => {
-    beforeEach(() => {
-      mockRequest = {
-        body: {
-          email: 'test@example.com',
-          password: 'Password123!'
-        }
-      };
-    });
-
-    it('should return 200 with token when login is successful', async () => {
-      // Define mock token data
-      const mockTokenData = {
-        access: {
-          token: mockAccessToken,
-          expires: mockAccessExpires,
-        },
-        refresh: {
-          token: mockRefreshToken,
-          expires: mockRefreshExpires,
-        }
-      };
-
-      mockLoginUserInstance.execute.mockImplementation(async () => {
-        mockLoginUserInstance.onTyped.mock.calls
-          .find(call => call[0] === 'SUCCESS')?.[1]({
-          userId: "68545171-f15c-4be7-bc86-2d0cd6b3114b",
-          tokens: mockTokenData
-        });
-      });
-
-      const { _login } = authController.login();
-      await _login(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-
-      // Use a more flexible approach for dynamic values
-      expect(mockJsonFn).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({
-          tokens: expect.objectContaining({
-            access: expect.objectContaining({
-              expires: expect.any(Date),
-              token: expect.any(String),
-            }),
-            refresh: expect.objectContaining({
-              expires: expect.any(Date),
-              token: expect.any(String),
-            }),
-          }),
-          userId: "68545171-f15c-4be7-bc86-2d0cd6b3114b",
-        }),
-      }));
-    });
-
-    it('should return 404 when user is not found', async () => {
-      // Set up mock to emit USER_NOT_FOUND event when execute is called
-      mockLoginUserInstance.execute.mockImplementation(async () => {
-        mockLoginUserInstance.onTyped.mock.calls
-          .find(call => call[0] === 'USER_NOT_FOUND')?.[1](
-          'No user found with email test@example.com'
-        );
-      });
-
-      const { _login } = authController.login();
-      await _login(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: null,
-        message: "No user found with email test@example.com",
-        type: "NotFoundError"
-      });
-    });
-
-    it('should return 401 when credentials are invalid', async () => {
-      // Set up mock to emit INVALID_CREDENTIALS event when execute is called
-      mockLoginUserInstance.execute.mockImplementation(async () => {
-        mockLoginUserInstance.onTyped.mock.calls
-          .find(call => call[0] === 'INVALID_CREDENTIALS')?.[1](
-          'Invalid email or password'
-        );
-      });
-
-      const { _login } = authController.login();
-      await _login(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.UNAUTHORIZED);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        message: "Invalid email or password",
-        type: "UnauthorizedError"
-      });
-    });
-
-    it('should return 403 when account is not verified', async () => {
-      // Set up mock to emit ACCOUNT_NOT_VERIFIED event when execute is called
-      mockLoginUserInstance.execute.mockImplementation(async () => {
-        mockLoginUserInstance.onTyped.mock.calls
-          .find(call => call[0] === 'ACCOUNT_NOT_VERIFIED')?.[1](
-          'Please verify your email before logging in'
-        );
-      });
-
-      const { _login } = authController.login();
-      await _login(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.FORBIDDEN);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        message: "Please verify your email before logging in",
-        type: "ForbiddenError"
-      });
-    });
-
-    it('should return 500 when an unexpected error occurs', async () => {
-      const error = new Error('Unexpected error');
-
-      // Set up mock to emit ERROR event when execute is called
-      mockLoginUserInstance.execute.mockImplementation(async () => {
-        mockLoginUserInstance.onTyped.mock.calls
-          .find(call => call[0] === 'ERROR')?.[1](error);
-      });
-
-      const { _login } = authController.login();
-      await _login(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: error,
-        message: "Unexpected error",
-        type: "InternalServerError"
-      });
-    });
-  });
-  describe('logout', () => {
-    it('should successfully logout a user', async () => {
-      // Arrange
-      const accessToken = faker.string.alphanumeric(32);
-      const refreshToken = faker.string.alphanumeric(32);
-
-      mockRequest = {
-        headers: {
-          authorization: `Bearer ${accessToken}`
-        },
-        body: {
-          refreshToken
-        }
-      };
-
-      mockLogoutUserInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'SUCCESS') {
-          handler({ message: 'Successfully logged out' });
-        }
-        return mockLogoutUserInstance;
-      });
-
-      // Act
-      await authController.logout()._logout(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockLogoutUserInstance.execute).toHaveBeenCalledWith({
-        accessToken,
-        refreshToken
-      });
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NO_CONTENT);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: { message: 'Successfully logged out' }
-      });
-    });
-
-    it('should handle missing authorization header', async () => {
-      // Arrange
-      mockRequest = {
-        headers: {},
-        body: {
-          refreshToken: faker.string.alphanumeric(32)
-        }
-      };
-
-      // Act
-      await authController.logout()._logout(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockLogoutUserInstance.execute).not.toHaveBeenCalled();
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        type: 'ValidationError',
-        details: 'Access token and refresh token are required',
-        message: 'Validation failed'
-      });
-    });
-
-    it('should handle missing refresh token', async () => {
-      // Arrange
-      mockRequest = {
-        headers: {
-          authorization: `Bearer ${faker.string.alphanumeric(32)}`
-        },
-        body: {}
-      };
-
-      // Act
-      await authController.logout()._logout(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockLogoutUserInstance.execute).not.toHaveBeenCalled();
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Access token and refresh token are required',
-        type: 'ValidationError',
-        message: 'Validation failed'
-      });
-    });
-
-    it('should handle invalid token error', async () => {
-      // Arrange
-      const accessToken = faker.string.alphanumeric(32);
-      const refreshToken = faker.string.alphanumeric(32);
-
-      mockRequest = {
-        headers: {
-          authorization: `Bearer ${accessToken}`
-        },
-        body: {
-          refreshToken
-        }
-      };
-
-      mockLogoutUserInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'INVALID_TOKEN') {
-          handler('Invalid or expired tokens');
-        }
-        return mockLogoutUserInstance;
-      });
-
-      // Act
-      await authController.logout()._logout(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        type: 'ValidationError',
-        message: 'Validation failed',
-        details: 'Invalid or expired tokens'
-      });
-    });
-
-    it('should handle unexpected errors', async () => {
-      // Arrange
-      const accessToken = faker.string.alphanumeric(32);
-      const refreshToken = faker.string.alphanumeric(32);
-
-      mockRequest = {
-        headers: {
-          authorization: `Bearer ${accessToken}`
-        },
-        body: {
-          refreshToken
-        }
-      };
-
-      mockLogoutUserInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'ERROR') {
-          handler(new Error('Unexpected error'));
-        }
-        return mockLogoutUserInstance;
-      });
-
-      // Act
-      await authController.logout()._logout(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: new Error('Unexpected error'),
-        type: 'InternalServerError',
-        message: 'Unexpected error'
-      });
-    });
-  });
-  describe('forgotPassword', () => {
-    const validEmail = 'test@example.com';
+    let _login: ControllerMethod;
+    let loginCredentials: {
+      email: string;
+      password: string;
+    };
+    let loginResponse: {
+      userId: string;
+      accessToken: string;
+      refreshToken: string;
+      accessTokenExpires: Date;
+      refreshTokenExpires: Date;
+    };
 
     beforeEach(() => {
-      mockRequest = {
-        body: { email: validEmail }
+      _login = authController.login()._login;
+
+      loginCredentials = {
+        email: faker.internet.email(),
+        password: faker.internet.password({ length: 12 })
       };
+
+      loginResponse = {
+        userId: faker.string.uuid(),
+        accessToken: faker.string.alphanumeric(40),
+        refreshToken: faker.string.alphanumeric(40),
+        accessTokenExpires: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+        refreshTokenExpires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+      };
+
+      mockRequest.body = loginCredentials;
+
+      // Mock DTO validation success by default
+      (AuthenticateUserDTO.validate as any).mockResolvedValue(loginCredentials);
+
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockLoginUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLoginUserUseCase.__trigger('SUCCESS', loginResponse);
+      });
     });
 
-    it('should return 400 if email is not provided', async () => {
-      // Arrange
-      mockRequest.body = {};
-      const { _forgotPassword } = authController.forgotPassword();
+    it('should login user successfully and return tokens with 200 status', async () => {
+      await _login(mockRequest, mockResponse, mockNext);
 
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
+      expect(AuthenticateUserDTO.validate).toHaveBeenCalledWith(loginCredentials);
+      expect(LoginUser).toHaveBeenCalledWith(
+        mockUserRepository,
+        mockPasswordHasher,
+        mockJWTTokenGenerator,
+        mockConfig,
+        mockLogger
       );
-
-      // Assert
-      expect(mockStatusFn).toHaveBeenCalledWith(400);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Email is required',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-      expect(mockForgotPasswordInstance.execute).not.toHaveBeenCalled();
-    });
-
-    it('should handle successful forgot password request', async () => {
-      // Arrange
-      const successMessage = 'Password reset instructions sent to your email';
-      mockForgotPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'SUCCESS') {
-          handler({ message: successMessage });
-        }
-        return mockForgotPasswordInstance;
-      });
-
-      const { _forgotPassword } = authController.forgotPassword();
-
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockForgotPasswordInstance.execute).toHaveBeenCalledWith({ email: validEmail });
-      expect(mockForgotPasswordInstance.onTyped).toHaveBeenCalledWith('SUCCESS', expect.any(Function));
-      expect(mockStatusFn).toHaveBeenCalledWith(200);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+      expect(mockLoginUserUseCase.execute).toHaveBeenCalledWith(loginCredentials);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
         data: {
-          message: successMessage
+          userId: loginResponse.userId,
+          tokens: {
+            access: {
+              token: loginResponse.accessToken,
+              expires: loginResponse.accessTokenExpires
+            },
+            refresh: {
+              token: loginResponse.refreshToken,
+              expires: loginResponse.refreshTokenExpires
+            }
+          }
         }
       });
+      expect(mockLogger.error).not.toHaveBeenCalled();
     });
 
-    it('should handle user not found', async () => {
-      // Arrange
-      const errorMessage = 'User with this email does not exist';
-      mockForgotPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'USER_NOT_FOUND') {
-          handler(errorMessage);
-        }
-        return mockForgotPasswordInstance;
+    it('should handle user not found error and return 404 status', async () => {
+      const errorMessage = 'User not found';
+      (mockLoginUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLoginUserUseCase.__trigger('USER_NOT_FOUND', errorMessage);
       });
 
-      const { _forgotPassword } = authController.forgotPassword();
+      await _login(mockRequest, mockResponse, mockNext);
 
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Assert
-      expect(mockForgotPasswordInstance.execute).toHaveBeenCalledWith({ email: validEmail });
-      expect(mockForgotPasswordInstance.onTyped).toHaveBeenCalledWith('USER_NOT_FOUND', expect.any(Function));
-      expect(mockStatusFn).toHaveBeenCalledWith(404);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
         details: null,
         message: errorMessage,
         type: 'NotFoundError'
       });
     });
 
-    it('should handle account not verified', async () => {
-      // Arrange
-      const errorMessage = 'Account not verified. Please verify your email first';
-      mockForgotPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'ACCOUNT_NOT_VERIFIED') {
-          handler(errorMessage);
-        }
-        return mockForgotPasswordInstance;
+    it('should handle invalid credentials and return 401 status', async () => {
+      const errorMessage = 'Invalid email or password';
+      (mockLoginUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLoginUserUseCase.__trigger('INVALID_CREDENTIALS', errorMessage);
       });
 
-      const { _forgotPassword } = authController.forgotPassword();
+      await _login(mockRequest, mockResponse, mockNext);
 
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      expect(mockStatus).toHaveBeenCalledWith(status.UNAUTHORIZED);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
+        message: errorMessage,
+        type: 'UnauthorizedError'
+      });
+    });
 
-      // Assert
-      expect(mockForgotPasswordInstance.execute).toHaveBeenCalledWith({ email: validEmail });
-      expect(mockForgotPasswordInstance.onTyped).toHaveBeenCalledWith('ACCOUNT_NOT_VERIFIED', expect.any(Function));
-      expect(mockStatusFn).toHaveBeenCalledWith(403);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+    it('should handle unverified account and return 403 status', async () => {
+      const errorMessage = 'Account not verified. Please verify your email before logging in.';
+      (mockLoginUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLoginUserUseCase.__trigger('ACCOUNT_NOT_VERIFIED', errorMessage);
+      });
+
+      await _login(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.FORBIDDEN);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
         message: errorMessage,
         type: 'ForbiddenError'
       });
     });
 
-    it('should handle unexpected errors', async () => {
-      // Arrange
+    it('should handle validation errors and return 400 status', async () => {
+      const validationError = createDtoValidationError([
+        { property: 'email', constraints: { isEmail: 'email must be a valid email address' } }
+      ]);
+
+      (AuthenticateUserDTO.validate as any).mockRejectedValue(validationError);
+
+      await _login(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: { email: ['email must be a valid email address'] },
+        message: "Validation failed",
+        type: 'ValidationError'
+      });
+    });
+
+    it('should handle unexpected errors and return 500 status', async () => {
       const error = new Error('Unexpected error');
-      mockForgotPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'ERROR') {
-          handler(error);
-        }
-        return mockForgotPasswordInstance;
+      (mockLoginUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLoginUserUseCase.__trigger('ERROR', error);
       });
 
-      const { _forgotPassword } = authController.forgotPassword();
+      await _login(mockRequest, mockResponse, mockNext);
 
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: error,
+        message: error.message,
+        type: 'InternalServerError'
+      });
+    });
+  });
+
+  // --- Test Cases for logout ---
+  describe('logout', () => {
+    let _logout: ControllerMethod;
+    let logoutData: {
+      accessToken: string;
+      refreshToken: string;
+    };
+
+    beforeEach(() => {
+      _logout = authController.logout()._logout;
+
+      logoutData = {
+        accessToken: faker.string.alphanumeric(40),
+        refreshToken: faker.string.alphanumeric(40)
+      };
+
+      mockRequest.headers = { authorization: `Bearer ${logoutData.accessToken}` };
+      mockRequest.body = { refreshToken: logoutData.refreshToken };
+
+      // Mock DTO validation success by default
+      (LogoutRequestDTO.validate as any).mockResolvedValue(logoutData);
+
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockLogoutUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLogoutUserUseCase.__trigger('SUCCESS', { message: 'Logout successful' });
+      });
+    });
+
+    it('should logout user successfully and return 204 status', async () => {
+      await _logout(mockRequest, mockResponse, mockNext);
+
+      expect(LogoutRequestDTO.validate).toHaveBeenCalledWith(logoutData);
+      expect(LogoutUser).toHaveBeenCalledWith(mockTokenBlackList, mockConfig, mockLogger);
+      expect(mockLogoutUserUseCase.execute).toHaveBeenCalledWith(logoutData);
+      expect(mockStatus).toHaveBeenCalledWith(status.NO_CONTENT);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: { message: 'Logout successful' }
+      });
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('should handle invalid token error and return 400 status', async () => {
+      const errorMessage = 'Invalid token provided';
+      (mockLogoutUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLogoutUserUseCase.__trigger('INVALID_TOKEN', errorMessage);
+      });
+
+      await _logout(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: errorMessage,
+        message: "Validation failed",
+        type: 'ValidationError'
+      });
+    });
+
+    it('should handle missing tokens and process with what is available', async () => {
+      mockRequest.headers = {};
+      mockRequest.body = {};
+
+      const partialLogoutData = { accessToken: undefined, refreshToken: undefined };
+      (LogoutRequestDTO.validate as any).mockResolvedValue(partialLogoutData);
+
+      await _logout(mockRequest, mockResponse, mockNext);
+
+      expect(LogoutRequestDTO.validate).toHaveBeenCalledWith(partialLogoutData);
+      expect(mockLogoutUserUseCase.execute).toHaveBeenCalledWith(partialLogoutData);
+    });
+
+    it('should handle validation errors and return 400 status', async () => {
+      const validationError = createDtoValidationError([
+        { property: 'accessToken', constraints: { isNotEmpty: 'accessToken should not be empty' } }
+      ]);
+
+      (LogoutRequestDTO.validate as any).mockRejectedValue(validationError);
+
+      await _logout(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+    });
+
+    it('should handle unexpected errors and return 500 status', async () => {
+      const error = new Error('Unexpected error');
+      (mockLogoutUserUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockLogoutUserUseCase.__trigger('ERROR', error);
+      });
+
+      await _logout(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: error,
+        message: error.message,
+        type: 'InternalServerError'
+      });
+    });
+  });
+
+  // --- Test Cases for forgotPassword ---
+  describe('forgotPassword', () => {
+    let _forgotPassword: ControllerMethod;
+    let forgotPasswordData: {
+      email: string;
+    };
+
+    beforeEach(() => {
+      _forgotPassword = authController.forgotPassword()._forgotPassword;
+
+      forgotPasswordData = {
+        email: faker.internet.email()
+      };
+
+      mockRequest.body = forgotPasswordData;
+
+      // Mock DTO validation success by default
+      (EmailUserDTO.validate as any).mockResolvedValue(forgotPasswordData);
+
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockForgotPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockForgotPasswordUseCase.__trigger('SUCCESS');
+      });
+    });
+
+    it('should process forgot password request successfully and return 200 status', async () => {
+      await _forgotPassword(mockRequest, mockResponse, mockNext);
+
+      expect(EmailUserDTO.validate).toHaveBeenCalledWith(forgotPasswordData);
+      expect(ForgotPassword).toHaveBeenCalledWith(
+        mockUserRepository,
+        mockTokenRepository,
+        mockTokenGenerator,
+        mockConfig,
+        mockLogger
       );
+      expect(mockForgotPasswordUseCase.execute).toHaveBeenCalledWith(forgotPasswordData);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: { message: 'Password reset instructions sent to your email' }
+      });
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
 
-      // Assert
-      expect(mockForgotPasswordInstance.execute).toHaveBeenCalledWith({ email: validEmail });
-      expect(mockForgotPasswordInstance.onTyped).toHaveBeenCalledWith('ERROR', expect.any(Function));
-      expect(mockStatusFn).toHaveBeenCalledWith(500);
-      expect(mockJsonFn).toHaveBeenCalledWith({
+    it('should handle user not found error and return 404 status', async () => {
+      const errorMessage = 'No user found with this email';
+      (mockForgotPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockForgotPasswordUseCase.__trigger('USER_NOT_FOUND', errorMessage);
+      });
+
+      await _forgotPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
+        message: errorMessage,
+        type: 'NotFoundError'
+      });
+    });
+
+    it('should handle unverified account and return 403 status', async () => {
+      const errorMessage = 'Account not verified. Please verify your email before resetting password.';
+      (mockForgotPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockForgotPasswordUseCase.__trigger('ACCOUNT_NOT_VERIFIED', errorMessage);
+      });
+
+      await _forgotPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.FORBIDDEN);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
+        message: errorMessage,
+        type: 'ForbiddenError'
+      });
+    });
+
+    it('should handle validation errors and return 400 status', async () => {
+      const validationError = createDtoValidationError([
+        { property: 'email', constraints: { isEmail: 'email must be a valid email address' } }
+      ]);
+
+      (EmailUserDTO.validate as any).mockRejectedValue(validationError);
+
+      await _forgotPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+    });
+
+    it('should handle unexpected errors and return 500 status', async () => {
+      const error = new Error('Unexpected error');
+      (mockForgotPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockForgotPasswordUseCase.__trigger('ERROR', error);
+      });
+
+      await _forgotPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: error,
+        message: error.message,
+        type: 'InternalServerError'
+      });
+    });
+  });
+
+  // --- Test Cases for resetPassword ---
+  describe('resetPassword', () => {
+    let _resetPassword: ControllerMethod;
+    let resetPasswordData: {
+      token: string;
+      password: string;
+      repeatPassword: string;
+    };
+
+    beforeEach(() => {
+      _resetPassword = authController.resetPassword()._resetPassword;
+
+      resetPasswordData = {
+        token: faker.string.alphanumeric(32),
+        password: faker.internet.password({ length: 12 }),
+        repeatPassword: faker.internet.password({ length: 12 })
+      };
+
+      mockRequest.body = resetPasswordData;
+
+      // Mock DTO validation success by default
+      (ResetPasswordDTO.validate as any).mockResolvedValue(resetPasswordData);
+
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockResetPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockResetPasswordUseCase.__trigger('SUCCESS', {
+          message: 'Password reset successfully'
+        });
+      });
+    });
+
+    it('should reset password successfully and return 200 status', async () => {
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(ResetPasswordDTO.validate).toHaveBeenCalledWith(resetPasswordData);
+      expect(ResetPassword).toHaveBeenCalledWith(
+        mockUserRepository,
+        mockTokenRepository,
+        mockPasswordHasher,
+        mockLogger
+      );
+      expect(mockResetPasswordUseCase.execute).toHaveBeenCalledWith(resetPasswordData);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: { message: 'Password reset successfully' }
+      });
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('should handle token not found error and return 404 status', async () => {
+      const errorMessage = 'Reset token not found';
+      (mockResetPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockResetPasswordUseCase.__trigger('TOKEN_NOT_FOUND', errorMessage);
+      });
+
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
+        message: errorMessage,
+        type: 'NotFoundError'
+      });
+    });
+
+    it('should handle token expired error and return 400 status', async () => {
+      const errorMessage = 'Reset token has expired';
+      (mockResetPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockResetPasswordUseCase.__trigger('TOKEN_EXPIRED', errorMessage);
+      });
+
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: errorMessage,
+        message: "Validation failed",
+        type: 'ValidationError'
+      });
+    });
+
+    it('should handle invalid token error and return 400 status', async () => {
+      const errorMessage = 'Invalid reset token';
+      (mockResetPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockResetPasswordUseCase.__trigger('INVALID_TOKEN', errorMessage);
+      });
+
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: errorMessage,
+        message: "Validation failed",
+        type: 'ValidationError'
+      });
+    });
+
+    it('should handle validation errors and return 400 status', async () => {
+      const validationError = createDtoValidationError([
+        { property: 'password', constraints: { minLength: 'password must be at least 8 characters' } }
+      ]);
+
+      (ResetPasswordDTO.validate as any).mockRejectedValue(validationError);
+
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
+    });
+
+    it('should handle unexpected errors and return 500 status', async () => {
+      const error = new Error('Unexpected error');
+      (mockResetPasswordUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockResetPasswordUseCase.__trigger('ERROR', error);
+      });
+
+      await _resetPassword(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: error,
+        message: error.message,
+        type: 'InternalServerError'
+      });
+    });
+  });
+
+// --- Test Cases for sendEmailOnUserCreation ---
+  describe('sendEmailOnUserCreation', () => {
+    let _sendEmailOnUserCreation: ControllerMethod;
+    let emailData: {
+      email: string;
+    };
+
+    beforeEach(() => {
+      _sendEmailOnUserCreation = authController.sendEmailOnUserCreation()._sendEmailOnUserCreation;
+
+      emailData = {
+        email: faker.internet.email()
+      };
+
+      mockRequest.body = emailData;
+
+      // Mock DTO validation success by default
+      (EmailUserDTO.validate as any).mockResolvedValue(emailData);
+
+      // Mock Use Case execution to trigger SUCCESS by default
+      (mockSendEmailOnUserCreationUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockSendEmailOnUserCreationUseCase.__trigger('SUCCESS', {
+          email: emailData.email
+        });
+      });
+    });
+
+    it('should send verification email successfully and return 200 status', async () => {
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
+
+      expect(EmailUserDTO.validate).toHaveBeenCalledWith(emailData);
+      expect(SendEmailOnUserCreation).toHaveBeenCalledWith(
+        mockTokenRepository,
+        mockUserRepository,
+        mockEmailService,
+        mockConfig,
+        mockLogger
+      );
+      expect(mockSendEmailOnUserCreationUseCase.execute).toHaveBeenCalledWith(emailData);
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: {
+          message: 'Verification email sent successfully',
+          email: emailData.email
+        }
+      });
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('should handle already verified user and return 200 status', async () => {
+      (mockSendEmailOnUserCreationUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockSendEmailOnUserCreationUseCase.__trigger('USER_ALREADY_VERIFIED', {
+          email: emailData.email
+        });
+      });
+
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.OK);
+      expect(mockJson).toHaveBeenCalledWith({
+        data: {
+          message: 'User is already verified',
+          email: emailData.email
+        }
+      });
+    });
+
+    it('should handle user not found error and return 404 status', async () => {
+      const errorMessage = 'User not found';
+      (mockSendEmailOnUserCreationUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockSendEmailOnUserCreationUseCase.__trigger('USER_NOT_FOUND', errorMessage);
+      });
+
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.NOT_FOUND);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: null,
+        message: errorMessage,
+        type: 'NotFoundError'
+      });
+    });
+
+    it('should handle availability error and return 500 status', async () => {
+      const error = new Error('Email service unavailable');
+      (mockSendEmailOnUserCreationUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockSendEmailOnUserCreationUseCase.__trigger('AVAILABILITY_ERROR', error);
+      });
+
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
         details: error,
         message: error.message,
         type: 'InternalServerError'
       });
     });
 
-    it('should catch and handle errors thrown during execution', async () => {
-      // Arrange
-      const unexpectedError = new Error('Unexpected runtime error');
-      mockForgotPasswordInstance.execute.mockRejectedValue(unexpectedError);
+    it('should handle validation errors and return 400 status', async () => {
+      const validationError = createDtoValidationError([
+        { property: 'email', constraints: { isEmail: 'email must be a valid email address' } }
+      ]);
 
-      const { _forgotPassword } = authController.forgotPassword();
+      (EmailUserDTO.validate as any).mockRejectedValue(validationError);
 
-      // Act
-      await _forgotPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
 
-      // Assert
-      expect(mockForgotPasswordInstance.execute).toHaveBeenCalledWith({ email: validEmail });
-      expect(mockStatusFn).toHaveBeenCalledWith(500);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: unexpectedError,
-        message: unexpectedError.message,
-        type: 'InternalServerError'
-      });
-    });
-  });
-
-  describe('resetPassword', () => {
-    it('should return 400 if token is missing', async () => {
-      mockRequest = {
-        body: {
-          password: 'newPassword123!'
-        }
-      };
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(400);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Reset token is required',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-      expect(mockResetPasswordInstance.execute).not.toHaveBeenCalled();
+      expect(mockStatus).toHaveBeenCalledWith(status.BAD_REQUEST);
     });
 
-    it('should return 400 if password is missing', async () => {
-      mockRequest = {
-        body: {
-          token: 'valid-token'
-        }
-      };
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockStatusFn).toHaveBeenCalledWith(400);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'New password is required',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-      expect(mockResetPasswordInstance.execute).not.toHaveBeenCalled();
-    });
-
-    it('should handle successful password reset', async () => {
-      mockRequest = {
-        body: {
-          token: 'valid-token',
-          password: 'newPassword123!'
-        }
-      };
-
-      mockResetPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'SUCCESS') {
-          handler({ message: 'Password has been reset successfully' });
-        }
-        return mockResetPasswordInstance;
+    it('should handle unexpected errors and return 500 status', async () => {
+      const error = new Error('Unexpected error');
+      (mockSendEmailOnUserCreationUseCase.execute as jest.Mock).mockImplementation(async () => {
+        mockSendEmailOnUserCreationUseCase.__trigger('ERROR', error);
       });
 
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockResetPasswordInstance.execute).toHaveBeenCalledWith({
-        token: 'valid-token',
-        newPassword: 'newPassword123!'
-      });
-      expect(mockStatusFn).toHaveBeenCalledWith(200);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: {
-          message: 'Password has been reset successfully'
-        }
-      });
-    });
-
-    it('should return 404 for token not found', async () => {
-      mockRequest = {
-        body: {
-          token: 'invalid-token',
-          password: 'newPassword123!'
-        }
-      };
-
-      mockResetPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'TOKEN_NOT_FOUND') {
-          handler('Invalid or expired reset token');
-        }
-        return mockResetPasswordInstance;
-      });
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockResetPasswordInstance.execute).toHaveBeenCalledWith({
-        token: 'invalid-token',
-        newPassword: 'newPassword123!'
-      });
-      expect(mockStatusFn).toHaveBeenCalledWith(404);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: null,
-        message: 'Invalid or expired reset token',
-        type: 'NotFoundError'
-      });
-    });
-
-    it('should return 400 for expired token', async () => {
-      mockRequest = {
-        body: {
-          token: 'expired-token',
-          password: 'newPassword123!'
-        }
-      };
-
-      mockResetPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'TOKEN_EXPIRED') {
-          handler('Reset token has expired');
-        }
-        return mockResetPasswordInstance;
-      });
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockResetPasswordInstance.execute).toHaveBeenCalledWith({
-        token: 'expired-token',
-        newPassword: 'newPassword123!'
-      });
-      expect(mockStatusFn).toHaveBeenCalledWith(400);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Reset token has expired',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-    });
-
-    it('should return 400 for invalid token type', async () => {
-      mockRequest = {
-        body: {
-          token: 'wrong-type-token',
-          password: 'newPassword123!'
-        }
-      };
-
-      mockResetPasswordInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'INVALID_TOKEN') {
-          handler('Invalid reset token');
-        }
-        return mockResetPasswordInstance;
-      });
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(mockRequest as HttpRequest, mockResponse as HttpResponse, mockNext);
-
-      expect(mockResetPasswordInstance.execute).toHaveBeenCalledWith({
-        token: 'wrong-type-token',
-        newPassword: 'newPassword123!'
-      });
-      expect(mockStatusFn).toHaveBeenCalledWith(400);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'Invalid reset token',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-    });
-
-    it('should handle unexpected exceptions', async () => {
-      mockRequest = {
-        body: {
-          token: 'valid-token',
-          password: 'newPassword123'
-        }
-      };
-
-      mockResetPasswordInstance.execute.mockImplementation(() => {
-        throw new Error('Unexpected error');
-      });
-
-      (ResetPassword as jest.MockedClass<typeof ResetPassword>).mockImplementation(
-        () => mockResetPasswordInstance
-      );
-
-      const { _resetPassword } = authController.resetPassword();
-
-      await _resetPassword(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // 6. Verify the error was handled properly
-      expect(mockLogger.error).toHaveBeenCalled();
-      expect(mockStatusFn).toHaveBeenCalledWith(500);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: new Error('Unexpected error'),
-        message: 'Unexpected error',
-        type: 'InternalServerError'
-      });
-    });
-  });
-
-  describe('sendEmailOnUserCreation', () => {
-    it('should handle USER_ALREADY_VERIFIED event', async () => {
-      const testUser = {
-        id: userId,
-        email: 'test@example.com',
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: true
-      };
-
-      mockRequest = {
-        body: { email: testUser.email }
-      };
-
-      mockUserRepository.findByEmail.mockResolvedValue(testUser);
-
-      // Mock event handlers
-      mockSendEmailOnUserCreationInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'USER_ALREADY_VERIFIED') {
-          handler({
-            userId: testUser.id,
-            email: testUser.email
-          });
-        }
-        return mockSendEmailOnUserCreationInstance;
-      });
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(testUser.email);
-      expect(SendEmailOnUserCreation).toHaveBeenCalledWith(
-        mockTokenRepository,
-        mockEmailService,
-        mockConfig,
-        mockLogger
-      );
-      expect(mockSendEmailOnUserCreationInstance.execute).toHaveBeenCalledWith(testUser);
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: {
-          message: 'User is already verified',
-          email: testUser.email
-        },
-      });
-    });
-
-    it('should return 400 if userId is not provided', async () => {
-      // Setup
-      mockRequest = {
-        body: {}
-      };
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockStatusFn).toHaveBeenCalledWith(status.BAD_REQUEST);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: 'User email is required',
-        message: 'Validation failed',
-        type: 'ValidationError'
-      });
-    });
-
-    it('should return 404 if user with provided email is not found', async () => {
-      // Use email instead of userId
-      const nonExistentEmail = 'nonexistent@example.com';
-      mockRequest = {
-        body: { email: nonExistentEmail }
-      };
-
-      // Mock findByEmail to return null (user not found)
-      mockUserRepository.findByEmail.mockResolvedValue(undefined);
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(nonExistentEmail);
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: null,
-        message: `User with email ${nonExistentEmail} not found`,
-        type: 'NotFoundError'
-      });
-    });
-
-    it('should call SendEmailOnUserCreation and handle success', async () => {
-      // Setup
-      const testUser = {
-        id: userId,
-        email: 'test@example.com',
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: false
-      };
-
-      mockRequest = {
-        body: { email: testUser.email }
-      };
-
-      mockUserRepository.findByEmail.mockResolvedValue(testUser);
-
-      // Mock event handlers
-      mockSendEmailOnUserCreationInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'EMAIL_SENT') {
-          handler({
-            userId: testUser.id,
-            email: testUser.email
-          });
-        }
-        return mockSendEmailOnUserCreationInstance;
-      });
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(testUser.email);
-      expect(SendEmailOnUserCreation).toHaveBeenCalledWith(
-        mockTokenRepository,
-        mockEmailService,
-        mockConfig,
-        mockLogger
-      );
-      expect(mockSendEmailOnUserCreationInstance.execute).toHaveBeenCalledWith(testUser);
-      expect(mockStatusFn).toHaveBeenCalledWith(status.OK);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        data: {
-          message: 'Verification email sent successfully',
-          email: testUser.email
-        },
-      });
-    });
-
-    it('should handle NOTFOUND_ERROR from SendEmailOnUserCreation', async () => {
-      // Setup
-      const testUser = {
-        id: userId,
-        email: 'test@example.com',
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: false
-      };
-
-      mockRequest = {
-        body: { email: testUser.email }
-      };
-
-      mockUserRepository.findByEmail.mockResolvedValue(testUser);
-
-      // Mock event handlers
-      mockSendEmailOnUserCreationInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'NOTFOUND_ERROR') {
-          handler(`No verification token found for user: ${userId}`);
-        }
-        return mockSendEmailOnUserCreationInstance;
-      });
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockStatusFn).toHaveBeenCalledWith(status.NOT_FOUND);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: null,
-        message: `No verification token found for user: ${userId}`,
-        type: 'NotFoundError'
-      });
-    });
-
-    it('should handle AVAILABILITY_ERROR from SendEmailOnUserCreation', async () => {
-      // Setup
-      const testUser = {
-        id: userId,
-        email: 'test@example.com',
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: false
-      };
-
-      mockRequest = {
-        body: { email: testUser.email }
-      };
-
-      mockUserRepository.findByEmail.mockResolvedValue(testUser);
-
-      const errorMessage = 'There was an error with the availability of the SMTP server';
-
-      // Mock event handlers
-      mockSendEmailOnUserCreationInstance.onTyped.mockImplementation((event, handler) => {
-        if (event === 'AVAILABILITY_ERROR') {
-          handler(errorMessage);
-        }
-        return mockSendEmailOnUserCreationInstance;
-      });
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: errorMessage,
-        message: 'An unexpected error occurred',
-        type: 'InternalServerError'
-      });
-    });
-
-    it('should handle unexpected errors', async () => {
-      // Setup
-      const email = 'test@example.com';
-      mockRequest = {
-        body: { email }
-      };
-
-      // Mock user to be found
-      const mockUser = {
-        id: userId,
-        email,
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: false
-      };
-      mockUserRepository.findByEmail.mockResolvedValue(mockUser);
-
-      // Mock SendEmailOnUserCreation instance to throw an error
-      mockSendEmailOnUserCreationInstance.execute.mockRejectedValue(new Error('Unexpected error'));
-      (SendEmailOnUserCreation as jest.MockedClass<typeof SendEmailOnUserCreation>).mockImplementation(
-        () => mockSendEmailOnUserCreationInstance
-      );
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockLogger.error).toHaveBeenCalled();
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR); // Use http-status constant
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: new Error('Unexpected error'),
-        message: 'Unexpected error',
-        type: 'InternalServerError'
-      });
-    });
-
-    it('should handle unexpected errors during execution', async () => {
-      // Setup
-      const testUser = {
-        id: userId,
-        email: 'test@example.com',
-        name: 'Test User',
-        username: 'testuser',
-        role: UserRole.USER,
-        isVerified: false
-      };
-
-      mockRequest = {
-        body: { email: testUser.email }
-      };
-
-      mockUserRepository.findByEmail.mockResolvedValue(testUser);
-
-      const unexpectedError = new Error('Unexpected error');
-      mockSendEmailOnUserCreationInstance.execute.mockRejectedValue(unexpectedError);
-
-      // Execute
-      const { _sendEmailOnUserCreation } = authController.sendEmailOnUserCreation();
-      await _sendEmailOnUserCreation(
-        mockRequest as HttpRequest,
-        mockResponse as HttpResponse,
-        mockNext
-      );
-
-      // Verify
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Unexpected error in send validation email',
-        unexpectedError
-      );
-      expect(mockStatusFn).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
-      expect(mockJsonFn).toHaveBeenCalledWith({
-        details: new Error('Unexpected error'),
-        message: 'Unexpected error',
+      await _sendEmailOnUserCreation(mockRequest, mockResponse, mockNext);
+
+      expect(mockStatus).toHaveBeenCalledWith(status.INTERNAL_SERVER_ERROR);
+      expect(mockJson).toHaveBeenCalledWith({
+        details: error,
+        message: error.message,
         type: 'InternalServerError'
       });
     });

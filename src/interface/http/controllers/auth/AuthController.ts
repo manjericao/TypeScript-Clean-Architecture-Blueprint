@@ -1,15 +1,36 @@
 import status from 'http-status';
-import { BaseController } from '@interface/http/controllers/base';
-import { ForgotPassword, LoginUser, LogoutUser, VerifyEmail, ResetPassword } from '@application/use_cases/auth';
-import { ControllerMethod, HttpNext, HttpRequest, HttpResponse } from '@interface/http/types/Http';
-import { SendEmailOnUserCreation } from '@application/use_cases/notification';
-import { AuthenticateUserDTO, EmailUserDTO, LogoutRequestDTO, ResetPasswordDTO } from '@enterprise/dto/input/auth';
-import { DTOValidationError } from '@enterprise/dto/errors';
-import { IJWTTokenGenerator, ITokenBlackList, ITokenGenerator } from '@application/contracts/security/authentication';
-import { IPasswordHasher } from '@application/contracts/security/encryption';
-import { IConfig, ILogger } from '@application/contracts/infrastructure';
+
 import { IEmailService } from '@application/contracts/communication/email';
 import { ITokenRepository, IUserRepository } from '@application/contracts/domain/repositories';
+import { IConfig, ILogger } from '@application/contracts/infrastructure';
+import {
+  IJWTTokenGenerator,
+  ITokenBlackList,
+  ITokenGenerator
+} from '@application/contracts/security/authentication';
+import { IPasswordHasher } from '@application/contracts/security/encryption';
+import {
+  ForgotPassword,
+  LoginUser,
+  LogoutUser,
+  VerifyEmail,
+  ResetPassword
+} from '@application/use_cases/auth';
+import { SendEmailOnUserCreation } from '@application/use_cases/notification';
+import {
+  AuthenticateUserDTO,
+  EmailUserDTO,
+  LogoutRequestDTO,
+  ResetPasswordDTO
+} from '@enterprise/dto/input/auth';
+import { TokenInputDTO } from '@enterprise/dto/input/token';
+import {
+  ControllerMethod,
+  HttpNext,
+  HttpRequest,
+  HttpResponse
+} from '@interface/http/adapters/Http';
+import { BaseController } from '@interface/http/controllers/base';
 
 /**
  * Controller responsible for handling authentication-related operations.
@@ -28,7 +49,7 @@ export class AuthController extends BaseController {
    * @param {IPasswordHasher} passwordHasher - The utility for hashing and verifying passwords.
    * @param {ILogger} logger - The service for logging information and errors.
    * @param {IConfig} config - The configuration service for accessing application settings.
-   * @param {ITokenBlackList} tokenBlackList - The service for managing blacklisted tokens.
+   * @param {ITokenBlackList} tokenBlackList - The service for managing blocklisted tokens.
    * @param {IEmailService} emailService - The service for sending emails.
    */
   constructor(
@@ -56,36 +77,31 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const tokenParam = request.query?.token;
-          let token: string | undefined;
+        await this.executeSafely(
+          response,
+          async () => {
+            const tokenParam = request.query?.token;
+            let token: string | undefined;
 
-          if (typeof tokenParam === 'string') {
-            token = tokenParam;
-          } else if (Array.isArray(tokenParam) && tokenParam.length > 0) {
-            token = String(tokenParam[0]);
-          } else {
-            token = undefined;
-          }
+            if (typeof tokenParam === 'string') {
+              token = tokenParam;
+            } else if (Array.isArray(tokenParam) && tokenParam.length > 0) {
+              token = String(tokenParam[0]);
+            } else {
+              token = undefined;
+            }
 
-          if (!token) {
-            this.handleValidationError(
-              response,
-              'Verification token is required'
+            const tokenData = await TokenInputDTO.validate({ token });
+
+            const verifyEmailCommand = new VerifyEmail(
+              this.userRepository,
+              this.tokenRepository,
+              this.logger
             );
-            return;
-          }
 
-          const verifyEmailCommand = new VerifyEmail(
-            this.userRepository,
-            this.tokenRepository,
-            this.logger
-          );
-
-          verifyEmailCommand
-            .onTyped('SUCCESS', (result) => {
+            verifyEmailCommand.on('SUCCESS', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -94,17 +110,17 @@ export class AuthController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('TOKEN_NOT_FOUND', (error) => {
+            });
+            verifyEmailCommand.on('TOKEN_NOT_FOUND', (error) => {
               this.handleNotFound(response, String(error));
-            })
-            .onTyped('USER_NOT_FOUND', (error) => {
+            });
+            verifyEmailCommand.on('USER_NOT_FOUND', (error) => {
               this.handleNotFound(response, String(error));
-            })
-            .onTyped('TOKEN_EXPIRED', (error) => {
+            });
+            verifyEmailCommand.on('TOKEN_EXPIRED', (error) => {
               this.handleValidationError(response, String(error));
-            })
-            .onTyped('ALREADY_VERIFIED', (result) => {
+            });
+            verifyEmailCommand.on('ALREADY_VERIFIED', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -113,34 +129,20 @@ export class AuthController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            verifyEmailCommand.on('ERROR', this.handleError(response));
 
-          await verifyEmailCommand.execute(token);
-        } catch (error: unknown) {
-          const typedError = error as Error & { statusCode?: number };
-          if (typedError.statusCode === status.BAD_REQUEST ||
-            typedError.statusCode === status.UNPROCESSABLE_ENTITY) {
-            this.handleValidationError(response, typedError.message);
-            return;
-          }
-          this.logger.error('Unexpected error in verify email', { error });
-          this.handleError(response)(error);
-        }
-      },
+            await verifyEmailCommand.execute(tokenData);
+          },
+          this.logger
+        );
+      }
     };
   }
 
   /**
    * Handles the login functionality for a user. Validates the user's credentials
    * and manages the appropriate response based on the outcome of the login attempt.
-   *
-   * The method performs the following operations:
-   * - Validates the presence of required fields (email and password).
-   * - Executes the login use case with dependencies such as user repository, password hasher,
-   *   token generator, config, and logger.
-   * - Handles various outcomes of the login process including success, invalid credentials,
-   *   unverified accounts, and errors.
    *
    * @return A ControllerMethod object that manages the login functionality and returns a structured response
    *         based on the success or failure of the login attempt.
@@ -151,26 +153,24 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const { email, password } = request.body as { email?: string; password?: string };
+        await this.executeSafely(
+          response,
+          async () => {
+            const credentials = await AuthenticateUserDTO.validate(
+              request.body as Record<string, unknown>
+            );
 
-          const credentials = await AuthenticateUserDTO.validate({
-            email,
-            password
-          });
+            const loginUserCommand = new LoginUser(
+              this.userRepository,
+              this.passwordHasher,
+              this.generateToken,
+              this.config,
+              this.logger
+            );
 
-          const loginUserCommand = new LoginUser(
-            this.userRepository,
-            this.passwordHasher,
-            this.generateToken,
-            this.config,
-            this.logger
-          );
-
-          loginUserCommand
-            .onTyped('SUCCESS', (result) => {
+            loginUserCommand.on('SUCCESS', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -178,43 +178,38 @@ export class AuthController extends BaseController {
                   tokens: {
                     access: {
                       token: result.accessToken,
-                      expires: result.accessTokenExpires,
+                      expires: result.accessTokenExpires
                     },
                     refresh: {
                       token: result.refreshToken,
-                      expires: result.refreshTokenExpires,
-                    },
+                      expires: result.refreshTokenExpires
+                    }
                   }
                 },
                 status.OK
               );
-            })
-            .onTyped('USER_NOT_FOUND', (error) => {
+            });
+            loginUserCommand.on('USER_NOT_FOUND', (error) => {
               this.handleNotFound(response, String(error));
-            })
-            .onTyped('INVALID_CREDENTIALS', (error) => {
+            });
+            loginUserCommand.on('INVALID_CREDENTIALS', (error) => {
               this.handleUnauthorized(response, String(error));
-            })
-            .onTyped('ACCOUNT_NOT_VERIFIED', (error) => {
+            });
+            loginUserCommand.on('ACCOUNT_NOT_VERIFIED', (error) => {
               this.handleForbidden(response, String(error));
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            loginUserCommand.on('ERROR', this.handleError(response));
 
-          await loginUserCommand.execute(credentials);
-        } catch (error: unknown) {
-          if (error instanceof DTOValidationError) {
-            this.handleValidationError(response, error.getFormattedErrors());
-          }
-
-          this.logger.error('Unexpected error in login', { error });
-          this.handleError(response)(error);
-        }
+            await loginUserCommand.execute(credentials);
+          },
+          this.logger
+        );
       }
     };
   }
 
   /**
-   * Handles the logout process for a user, including token validation and blacklisting.
+   * Handles the logout process for a user, including token validation and blocklisting.
    *
    * @return {Object} An object containing the `_logout` method, which manages the logout logic
    *                  by invalidating the provided access and refresh tokens.
@@ -225,32 +220,29 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const body = request.body as { refreshToken?: string } | undefined;
-          const authHeader = request.headers?.authorization;
+        await this.executeSafely(
+          response,
+          async () => {
+            const body = request.body as { refreshToken?: string } | undefined;
+            const authHeader = request.headers?.authorization;
 
-          let accessToken: string | undefined;
-          if (authHeader?.startsWith('Bearer ')) {
-            accessToken = authHeader.substring(7);
-          }
+            let accessToken: string | undefined;
+            if (authHeader?.startsWith('Bearer ')) {
+              accessToken = authHeader.substring(7);
+            }
 
-          const refreshToken = body?.refreshToken;
+            const refreshToken = body?.refreshToken;
 
-          const logoutData = await LogoutRequestDTO.validate({
-            accessToken,
-            refreshToken
-          });
+            const logoutData = await LogoutRequestDTO.validate({
+              accessToken,
+              refreshToken
+            });
 
-          const logoutCommand = new LogoutUser(
-            this.tokenBlackList,
-            this.config,
-            this.logger
-          );
+            const logoutCommand = new LogoutUser(this.tokenBlackList, this.config, this.logger);
 
-          logoutCommand
-            .onTyped('SUCCESS', (result) => {
+            logoutCommand.on('SUCCESS', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -258,21 +250,16 @@ export class AuthController extends BaseController {
                 },
                 status.NO_CONTENT
               );
-            })
-            .onTyped('INVALID_TOKEN', (error) => {
+            });
+            logoutCommand.on('INVALID_TOKEN', (error) => {
               this.handleValidationError(response, String(error));
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            logoutCommand.on('ERROR', this.handleError(response));
 
-          await logoutCommand.execute(logoutData);
-        } catch (error) {
-          if (error instanceof DTOValidationError) {
-            this.handleValidationError(response, error.getFormattedErrors());
-          }
-
-          this.logger.error('Unexpected error in logout user', { error });
-          this.handleError(response)(error);
-        }
+            await logoutCommand.execute(logoutData);
+          },
+          this.logger
+        );
       }
     };
   }
@@ -280,12 +267,9 @@ export class AuthController extends BaseController {
   /**
    * Handles the forgot password process by validating the input email,
    * invoking the ForgotPassword use case, and managing the result through
-   * event handlers for various scenarios such as success, user not found,
-   * or account not verified.
+   * event handlers for various scenarios.
    *
    * @return An object containing a method `_forgotPassword` which is an asynchronous controller method.
-   *         The method processes the forget password request, interacts with necessary use cases,
-   *         and handles different response outcomes effectively.
    */
   public forgotPassword(): { _forgotPassword: ControllerMethod } {
     return {
@@ -293,63 +277,51 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const { email } = request.body as { email: string; };
+        await this.executeSafely(
+          response,
+          async () => {
+            const forgotPasswordData = await EmailUserDTO.validate(
+              request.body as Record<string, unknown>
+            );
 
-          const forgotPasswordData = await EmailUserDTO.validate({ email });
+            const forgotPasswordCommand = new ForgotPassword(
+              this.userRepository,
+              this.tokenRepository,
+              this.generateRefreshToken,
+              this.config,
+              this.logger
+            );
 
-          const forgotPasswordCommand = new ForgotPassword(
-            this.userRepository,
-            this.tokenRepository,
-            this.generateRefreshToken,
-            this.config,
-            this.logger
-          );
-
-          // Set up event handlers following the pattern in other methods
-          forgotPasswordCommand
-            .onTyped('SUCCESS', (result) => {
+            forgotPasswordCommand.on('SUCCESS', () => {
               this.handleSuccess(
                 response,
-                { message: result.message },
+                { message: 'Password reset instructions sent to your email' },
                 status.OK
               );
-            })
-            .onTyped('USER_NOT_FOUND', (error) => {
-              this.handleNotFound(
-                response,
-                String(error)
-              );
-            })
-            .onTyped('ACCOUNT_NOT_VERIFIED', (error) => {
-              this.handleForbidden(
-                response,
-                String(error)
-              );
-            })
-            .onTyped('ERROR', this.handleError(response));
+            });
+            forgotPasswordCommand.on('USER_NOT_FOUND', (error) => {
+              this.handleNotFound(response, String(error));
+            });
+            forgotPasswordCommand.on('ACCOUNT_NOT_VERIFIED', (error) => {
+              this.handleForbidden(response, String(error));
+            });
+            forgotPasswordCommand.on('ERROR', this.handleError(response));
 
-          await forgotPasswordCommand.execute(forgotPasswordData);
-        } catch (error) {
-          if (error instanceof DTOValidationError) {
-            this.handleValidationError(response, error.getFormattedErrors());
-          }
-
-          this.logger.error('Unexpected error in forgot password', { error });
-          this.handleError(response)(error);
-        }
+            await forgotPasswordCommand.execute(forgotPasswordData);
+          },
+          this.logger
+        );
       }
     };
   }
 
   /**
    * Handles the reset password functionality by processing the provided token and new password.
-   * Validates the input, performs the reset operation using the `ResetPassword` command,
-   * and sends appropriate responses based on the outcome.
+   * Validates the input, performs the reset operation, and sends appropriate responses.
    *
-   * @return {Object} Returns an object containing the reset password controller method `_resetPassword`.
+   * @return {Object} Returns an object containing the reset password controller method.
    */
   public resetPassword(): { _resetPassword: ControllerMethod } {
     return {
@@ -357,23 +329,23 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const body = request.body as { token: string; password: string; };
-          const { token, password } = body;
+        await this.executeSafely(
+          response,
+          async () => {
+            const resetPasswordData = await ResetPasswordDTO.validate(
+              request.body as Record<string, unknown>
+            );
 
-          const resetPasswordData = await ResetPasswordDTO.validate({ token, newPassword: password });
+            const resetPasswordCommand = new ResetPassword(
+              this.userRepository,
+              this.tokenRepository,
+              this.passwordHasher,
+              this.logger
+            );
 
-          const resetPasswordCommand = new ResetPassword(
-            this.userRepository,
-            this.tokenRepository,
-            this.passwordHasher,
-            this.logger
-          );
-
-          resetPasswordCommand
-            .onTyped('SUCCESS', (result) => {
+            resetPasswordCommand.on('SUCCESS', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -381,26 +353,22 @@ export class AuthController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('TOKEN_NOT_FOUND', (error) => {
-              this.handleNotFound(response, String(error));
-            })
-            .onTyped('TOKEN_EXPIRED', (error) => {
-              this.handleValidationError(response, String(error));
-            })
-            .onTyped('INVALID_TOKEN', (error) => {
-              this.handleValidationError(response, String(error));
-            })
-            .onTyped('ERROR', (error) => {
-              this.logger.error('Error in reset password process', { error });
-              this.handleError(response);
             });
+            resetPasswordCommand.on('TOKEN_NOT_FOUND', (error) => {
+              this.handleNotFound(response, String(error));
+            });
+            resetPasswordCommand.on('TOKEN_EXPIRED', (error) => {
+              this.handleValidationError(response, String(error));
+            });
+            resetPasswordCommand.on('INVALID_TOKEN', (error) => {
+              this.handleValidationError(response, String(error));
+            });
+            resetPasswordCommand.on('ERROR', this.handleError(response));
 
-          await resetPasswordCommand.execute(resetPasswordData);
-        } catch (error) {
-          this.logger.error('Unexpected error in reset password', error);
-          this.handleError(response)(error);
-        }
+            await resetPasswordCommand.execute(resetPasswordData);
+          },
+          this.logger
+        );
       }
     };
   }
@@ -408,7 +376,6 @@ export class AuthController extends BaseController {
   /**
    * Sends a verification email when a new user is created.
    * This method orchestrates the execution of the `SendEmailOnUserCreation` use case.
-   * Handles various scenarios such as missing user ID, user not found, and internal errors.
    *
    * @return {Object} An object containing the `_sendEmailOnUserCreation` method handler.
    */
@@ -418,25 +385,24 @@ export class AuthController extends BaseController {
         request: HttpRequest,
         response: HttpResponse,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        next: HttpNext
+        _next: HttpNext
       ): Promise<void> => {
-        try {
-          const body = request.body as { email: string; };
-          const { email } = body;
+        await this.executeSafely(
+          response,
+          async () => {
+            const emailUserDTO = await EmailUserDTO.validate(
+              request.body as Record<string, unknown>
+            );
 
-          const emailUserDTO = await EmailUserDTO.validate({ email });
+            const sendEmailOnUserCreation = new SendEmailOnUserCreation(
+              this.tokenRepository,
+              this.userRepository,
+              this.emailService,
+              this.config,
+              this.logger
+            );
 
-          // Create an instance of SendEmailOnUserCreation use case
-          const sendEmailOnUserCreation = new SendEmailOnUserCreation(
-            this.tokenRepository,
-            this.userRepository,
-            this.emailService,
-            this.config,
-            this.logger
-          );
-
-          sendEmailOnUserCreation
-            .onTyped('EMAIL_SENT', (result) => {
+            sendEmailOnUserCreation.on('SUCCESS', (result) => {
               this.handleSuccess(
                 response,
                 {
@@ -445,8 +411,8 @@ export class AuthController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('USER_ALREADY_VERIFIED', (data) => {
+            });
+            sendEmailOnUserCreation.on('USER_ALREADY_VERIFIED', (data) => {
               this.handleSuccess(
                 response,
                 {
@@ -455,23 +421,19 @@ export class AuthController extends BaseController {
                 },
                 status.OK
               );
-            })
-            .onTyped('NOTFOUND_ERROR', (error) => {
-              this.handleNotFound(response, String(error));
-            })
-            .onTyped('AVAILABILITY_ERROR', (error) => {
-              this.handleError(response)(error);
-            })
-            .onTyped('ERROR', (error) => {
-              this.logger.error('Error in reset password process', { error });
-              this.handleError(response);
             });
+            sendEmailOnUserCreation.on('USER_NOT_FOUND', (error) => {
+              this.handleNotFound(response, String(error));
+            });
+            sendEmailOnUserCreation.on('AVAILABILITY_ERROR', (error) => {
+              this.handleError(response)(error);
+            });
+            sendEmailOnUserCreation.on('ERROR', this.handleError(response));
 
-          await sendEmailOnUserCreation.execute(emailUserDTO);
-        } catch (error) {
-          this.logger.error('Unexpected error in send validation email', error);
-          this.handleError(response)(error);
-        }
+            await sendEmailOnUserCreation.execute(emailUserDTO);
+          },
+          this.logger
+        );
       }
     };
   }
