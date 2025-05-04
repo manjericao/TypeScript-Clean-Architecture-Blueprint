@@ -18,6 +18,7 @@ import { IPasswordHasher } from '@application/contracts/security/encryption';
 import { IConfig, ILogger } from '@application/contracts/infrastructure';
 import { IUserRepository } from '@application/contracts/domain/repositories';
 import { IAuthMiddleware } from '@infrastructure/web/middleware';
+import { IAuthorizationMiddleware } from '@application/contracts/security/authorization';
 
 describe('UserModule Integration Tests', () => {
   let app: express.Application;
@@ -107,20 +108,21 @@ describe('UserModule Integration Tests', () => {
     const mockLogger: ILogger = {
       info: jest.fn(),
       debug: jest.fn(),
-      error: jest.fn()
+      error: jest.fn(),
+      warn: jest.fn()
     };
 
     const mockAuthMiddleware: IAuthMiddleware = {
       initialize: jest.fn().mockImplementation(() => {
-        return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        return (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
           next();
         };
       }),
-      handle: jest.fn().mockImplementation((req: express.Request, res: express.Response, next: express.NextFunction) => {
+      handle: jest.fn().mockImplementation((_req: express.Request, _res: express.Response, next: express.NextFunction) => {
         next();
       }),
       asMiddleware: jest.fn().mockImplementation(() => {
-        return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        return (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
           next();
         };
       })
@@ -133,6 +135,18 @@ describe('UserModule Integration Tests', () => {
       ),
     };
 
+    const mockAuthorizationMiddleware: IAuthorizationMiddleware = {
+      handle: jest.fn().mockImplementation((_req: express.Request, _res: express.Response, next: express.NextFunction): void => {
+        next();
+      }),
+
+      requireRoles: jest.fn().mockImplementation((_roles) => {
+        return (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
+          next();
+        };
+      })
+    };
+
     // Bind dependencies
     container.bind<IConfig>(Types.Config).toConstantValue(mockConfig);
     container.bind<ILogger>(Types.Logger).toConstantValue(mockLogger);
@@ -141,6 +155,7 @@ describe('UserModule Integration Tests', () => {
     container.bind<ITransformer>(Types.Transformer).to(BaseTransformer);
     container.bind<IPasswordHasher>(Types.PasswordHasher).toConstantValue(passwordHasher);
     container.bind<IAuthMiddleware>(Types.AuthMiddleware).toConstantValue(mockAuthMiddleware);
+    container.bind<IAuthorizationMiddleware>(Types.AuthorizationMiddleware).toConstantValue(mockAuthorizationMiddleware);
 
     // Bind controller
     container.bind<UserController>(Types.UserController).toDynamicValue(() => {
@@ -206,7 +221,7 @@ describe('UserModule Integration Tests', () => {
       expect(response.body.data.email).toEqual(userData.email);
       expect(response.body.data.username).toEqual(userData.username);
       expect(response.body.data.role).toEqual(userData.role);
-      // Password should not be returned
+      // The Password should not be returned
       expect(response.body.data.password).toBeUndefined();
 
       // Verify the user was created in the database
@@ -241,26 +256,25 @@ describe('UserModule Integration Tests', () => {
         .send(userData)
         .expect(status.BAD_REQUEST);
 
-      expect(response.body.details).toContain('Passwords do not match');
+      expect(response.body.details).toEqual({"repeatPassword": ["Passwords do not match"]});
     });
 
     it('should return 409 if user with email already exists', async () => {
       // Arrange
       const userData = generateUserDTO();
 
-      // Create a user first
       await userRepository.create({
         ...userData,
-        password: 'hashed_password', // Mock hashed password
+        password: 'hashed_password',
         repeatPassword: 'hashed_password'
       });
 
-      // Act & Assert - Try to create another user with same email
+      // Act & Assert - Try to create another user with the same email
       const response = await request(app)
         .post('/user')
-        .send(userData)
-        .expect(status.CONFLICT);
+        .send(userData);
 
+      expect(response.status).toBe(status.CONFLICT);
       expect(response.body.message).toContain('already exists');
     });
 
@@ -300,7 +314,7 @@ describe('UserModule Integration Tests', () => {
       // Assert
       expect(passwordHasher.hashPassword).toHaveBeenCalledWith(plainPassword);
 
-      // Verify the user was stored with hashed password
+      // Verify the user was stored with a hashed password
       const storedUser = await userRepository.findByEmail(userData.email);
       expect(storedUser).toBeDefined();
       // Can't directly check the password hash, but we can verify it was called
@@ -410,7 +424,7 @@ describe('UserModule Integration Tests', () => {
 
   describe('DELETE /user/:id', () => {
     it('should delete a user when a valid ID is provided', async () => {
-      // First create a user to delete
+      // First, create a user to delete
       const userDTO = generateUserDTO();
       const createdUser = await userRepository.create(userDTO);
       const userId = createdUser.id.toString();
