@@ -89,6 +89,10 @@ export class WinstonLogger implements ILogger {
     this.logger.info(message, ...args);
   }
 
+  warn(message: string, ...args: unknown[]): void {
+    this.logger.warn(message, ...args);
+  }
+
   debug(message: string, ...args: unknown[]): void {
     this.logger.debug(message, ...args);
   }
