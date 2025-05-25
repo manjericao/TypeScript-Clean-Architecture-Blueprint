@@ -1,0 +1,125 @@
+# Authentication Load Test - Login Scenario
+config:
+  processor: "../config/functions.js" # Path relative to this script file
+  plugins:
+    metrics-by-endpoint: { }
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+
+scenarios:
+  - name: "Login with valid credentials"
+    weight: 7
+    beforeScenario:
+      - loadTestData
+    flow:
+      - log: "Attempting login with valid credentials"
+      - post:
+          url: "{{ target }}{{ baseUrl }}/auth/login" # Should now correctly use target from environments.yaml
+          json:
+            email: "{{ users[0].email }}"
+            password: "{{ users[0].password }}"
+          capture:
+            - json: "$.tokens.access.token"
+              as: "authToken"
+            - json: "$.userId"
+              as: "userId"
+            - json: "$.tokens.refresh.token"
+              as: "refreshToken"
+          expect:
+            - statusCode: 200
+            - hasProperty: "tokens.access.token"
+            - hasProperty: "userId"
+      - function: "logResponse"
+      - log: "Successfully logged in with user ID: {{ userId }}"
+
+      # Test an authenticated endpoint
+      - get:
+          url: "{{ target }}{{ baseUrl }}/user/{{ userId }}"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+      # Test logout
+      - post:
+          url: "{{ target }}{{ baseUrl }}/auth/logout"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            refreshToken: "{{ refreshToken }}"
+          expect:
+            - statusCode: 200
+
+  # --- Other scenarios also use {{ target }}{{ baseUrl }} ---
+
+  - name: "Login and perform multiple operations"
+    weight: 5
+    beforeScenario:
+      - loadTestData
+    flow:
+      - function: "generateRandomEmail"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - function: "generateRandomBirthDate"
+      - function: "generateRandomGender"
+      - function: "generateRandomRole"
+
+      # First, create a new user
+      - post:
+          url: "{{ target }}{{ baseUrl }}/user" # Should now correctly use target from environments.yaml
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+            repeatPassword: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            role: "{{ randomRole }}"
+            name: "{{ randomUsername }}"
+            birthDate: "{{ randomBirthDate }}"
+            gender: "{{ randomGender }}"
+          capture:
+            - json: "$.id"
+              as: "newUserId"
+          expect:
+            - statusCode: 201
+
+      # Then login with the new user
+      - post:
+          url: "{{ target }}{{ baseUrl }}/auth/login"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+          capture:
+            # Based on AuthController.ts, the token is nested
+            - json: "$.tokens.access.token"
+              as: "newUserToken"
+            - json: "$.tokens.refresh.token" # <-- Added: Capture the refresh token
+              as: "newUserRefreshToken"     # <-- Added: Store it as a newUserRefreshToken
+            - json: "$.userId"
+              as: "loggedInUserId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "tokens.access.token" # Verify nesting
+            - hasProperty: "tokens.refresh.token" # Optional: Verify refresh token presence
+
+      # Verify the user can access their own data
+      - get:
+          url: "{{ target }}{{ baseUrl }}/user/{{ loggedInUserId }}"
+          headers:
+            Authorization: "Bearer {{ newUserToken }}"
+          expect:
+            - statusCode: 200
+            - equals: # Ensure this comparison is valid/needed
+                - "{{ loggedInUserId }}"
+                - "{{ newUserId }}"
+
+      # Logout
+      - post:
+          url: "{{ target }}{{ baseUrl }}/auth/logout"
+          headers:
+            Authorization: "Bearer {{ newUserToken }}"
+          json:
+            refreshToken: "{{ newUserRefreshToken }}" # <-- Changed: Use the captured newUserRefreshToken
+          expect:
+            - statusCode: 200 # Check actual logout status

@@ -1,0 +1,137 @@
+# Authentication Load Test - Registration and Email Verification Scenario
+config:
+  processor: "../config/functions.js" # Path relative to this script file
+  plugins:
+    metrics-by-endpoint: { }
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+
+scenarios:
+  - name: "Register new users and verify email"
+    weight: 7
+    beforeScenario:
+      - loadTestData
+    flow:
+      - function: "generateRandomEmail"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - function: "generateRandomBirthDate"
+      - function: "generateRandomGender"
+
+      # Register a new user
+      - log: "Registering new user with email: {{ randomEmail }}"
+      - post:
+          url: "/user"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            name: "New Test User"
+            birthDate: "{{ randomBirthDate }}"
+            gender: "{{ randomGender }}"
+          capture:
+            - json: "$.id"
+              as: "userId"
+          expect:
+            - statusCode: 201
+            - hasProperty: "id"
+            - hasProperty: "email"
+
+      # Request email verification (simulating clicking on the verification link would be done manually)
+      - log: "Requesting email verification for user: {{ userId }}"
+      - post:
+          url: "/auth/send-verification-email"
+          json:
+            email: "{{ randomEmail }}"
+          expect:
+            - statusCode: 200
+            - hasProperty: "message"
+
+      # In a real scenario, the user would receive an email with a verification link
+      # For testing purposes, we'll simulate that the user has verified their email
+      # by attempting to log in (which would fail if email verification is required)
+
+      # Attempt to log in (may fail if email verification is strictly required)
+      - log: "Attempting to login with newly registered user"
+      - post:
+          url: "/auth/login"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+              when: "statusCode === 200"
+          expect:
+            - statusCode: [200, 403] # 200 if verification not required, 403 if required
+
+  - name: "Register users with invalid data"
+    weight: 3
+    flow:
+      # Test with missing required fields
+      - log: "Attempting registration with missing password"
+      - function: "generateRandomEmail"
+      - function: "generateRandomUsername"
+      - post:
+          url: "/user"
+          json:
+            email: "{{ randomEmail }}"
+            username: "{{ randomUsername }}"
+            name: "Invalid User"
+          expect:
+            - statusCode: 400
+
+      # Test with invalid email format
+      - log: "Attempting registration with invalid email format"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - post:
+          url: "/user"
+          json:
+            email: "invalid-email-format"
+            password: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            name: "Invalid Email User"
+          expect:
+            - statusCode: 400
+
+      # Test with too short a password
+      - log: "Attempting registration with too short password"
+      - function: "generateRandomEmail"
+      - function: "generateRandomUsername"
+      - post:
+          url: "/user"
+          json:
+            email: "{{ randomEmail }}"
+            password: "short"
+            username: "{{ randomUsername }}"
+            name: "Short Password User"
+          expect:
+            - statusCode: 400
+
+  - name: "Test password reset flow"
+    weight: 5
+    flow:
+      - log: "Requesting password reset"
+      - post:
+          url: "/auth/forgot-password"
+          json:
+            email: "{{ $randomItem(newUsers) }}"
+          expect:
+            - statusCode: 200
+            - hasProperty: "message"
+
+      # In a real scenario, the user would receive an email with a reset token
+      # For testing purposes. We'll simulate that the user has received the token
+      # Note: This is a simulated token and would not work in a real environment
+      - log: "Simulating password reset with token"
+      - function: "generateRandomPassword"
+      - post:
+          url: "/auth/reset-password"
+          json:
+            token: "simulated-reset-token-for-testing"
+            password: "{{ randomPassword }}"
+          expect:
+            - statusCode: [200, 400, 404] # 200 if token accepted, 400/404 if token validation fails

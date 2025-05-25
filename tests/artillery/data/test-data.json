@@ -1,0 +1,89 @@
+{
+  "users": [
+    {
+      "email": "admin@example.com",
+      "password": "Admin123!",
+      "repeatPassword": "Admin123!",
+      "username": "admin",
+      "name": "Admin",
+      "birthDate": "1990-01-01",
+      "gender": "MALE",
+      "role": "ADMIN"
+    },
+    {
+      "email": "user1@example.com",
+      "password": "User123!",
+      "repeatPassword": "User123!",
+      "username": "user1",
+      "name": "Regular",
+      "birthDate": "1992-05-15",
+      "gender": "MALE",
+      "role": "USER"
+    },
+    {
+      "email": "user2@example.com",
+      "password": "User123!",
+      "repeatPassword": "User123!",
+      "username": "user2",
+      "name": "Regular2",
+      "birthDate": "1988-11-23",
+      "gender": "FEMALE",
+      "role": "USER"
+    }
+  ],
+  "invalidCredentials": [
+    {
+      "email": "nonexistent@example.com",
+      "password": "WrongPass123!"
+    },
+    {
+      "email": "user1@example.com",
+      "password": "WrongPassword"
+    },
+    {
+      "email": "",
+      "password": "User123!"
+    },
+    {
+      "email": "invalid-email",
+      "password": "User123!"
+    }
+  ],
+  "newUsers": [
+    {
+      "name": "User1",
+      "gender": "MALE",
+      "birthDate": "1995-03-12"
+    },
+    {
+      "name": "User2",
+      "gender": "FEMALE",
+      "birthDate": "1987-07-22"
+    },
+    {
+      "name": "User3",
+      "gender": "OTHER",
+      "birthDate": "2000-12-05"
+    }
+  ],
+  "userUpdates": [
+    {
+      "name": "UserName",
+      "birthDate": "1991-04-18",
+      "gender": "MALE"
+    },
+    {
+      "name": "AnotherUpdatedName",
+      "birthDate": "1989-09-30",
+      "gender": "FEMALE"
+    }
+  ],
+  "resetPasswordRequests": [
+    {
+      "email": "user1@example.com"
+    },
+    {
+      "email": "user2@example.com"
+    }
+  ]
+}

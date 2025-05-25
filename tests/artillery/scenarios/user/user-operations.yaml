@@ -1,0 +1,219 @@
+# User Operations Load Test
+config:
+  processor: "../config/functions.js" # Path relative to this script file
+  plugins:
+    metrics-by-endpoint: { }
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+
+scenarios:
+  - name: "Create and manage users (admin operations)"
+    weight: 5
+    flow:
+      # Login as admin
+      - log: "Logging in as admin"
+      - post:
+          url: "/auth/login"
+          json:
+            email: "{{ users[0].email }}"
+            password: "{{ users[0].password }}"
+          capture:
+            - json: "$.token"
+              as: "adminToken"
+            - json: "$.userId"
+              as: "adminId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "token"
+
+      # Create multiple users in sequence
+      - log: "Creating new users as admin"
+      - function: "generateRandomEmail"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - function: "generateRandomBirthDate"
+      - function: "generateRandomGender"
+      - post:
+          url: "/user"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            name: "Admin Created User"
+            birthDate: "{{ randomBirthDate }}"
+            gender: "{{ randomGender }}"
+          capture:
+            - json: "$.id"
+              as: "newUserId1"
+          expect:
+            - statusCode: 201
+
+      # Create another user
+      - function: "generateRandomEmail"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - function: "generateRandomBirthDate"
+      - function: "generateRandomGender"
+      - post:
+          url: "/user"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            name: "Another Admin Created User"
+            birthDate: "{{ randomBirthDate }}"
+            gender: "{{ randomGender }}"
+          capture:
+            - json: "$.id"
+              as: "newUserId2"
+          expect:
+            - statusCode: 201
+
+      # Get all users (with pagination)
+      - log: "Getting all users with pagination"
+      - get:
+          url: "/user?page=1&limit=10"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          expect:
+            - statusCode: 200
+
+      # Get a specific user
+      - log: "Getting specific user details"
+      - get:
+          url: "/user/{{ newUserId1 }}"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          expect:
+            - statusCode: 200
+            - hasProperty: "id"
+            - hasProperty: "email"
+
+      # Update user
+      - log: "Updating user details"
+      - put:
+          url: "/user/{{ newUserId1 }}"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          json:
+            name: "{{ userUpdates[0].name }}"
+            birthDate: "{{ userUpdates[0].birthDate }}"
+            gender: "{{ userUpdates[0].gender }}"
+          expect:
+            - statusCode: 200
+            - hasProperty: "id"
+
+      # Delete user
+      - log: "Deleting a user"
+      - delete:
+          url: "/user/{{ newUserId2 }}"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          expect:
+            - statusCode: 204
+
+  - name: "User self-management operations"
+    weight: 7
+    flow:
+      # Create a new user
+      - function: "generateRandomEmail"
+      - function: "generateRandomPassword"
+      - function: "generateRandomUsername"
+      - function: "generateRandomBirthDate"
+      - function: "generateRandomGender"
+      - log: "Creating a new user for self-management test"
+      - post:
+          url: "/user"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+            username: "{{ randomUsername }}"
+            name: "Self Managed User"
+            birthDate: "{{ randomBirthDate }}"
+            gender: "{{ randomGender }}"
+          capture:
+            - json: "$.id"
+              as: "selfUserId"
+          expect:
+            - statusCode: 201
+
+      # Login as the new user
+      - log: "Logging in as the new user"
+      - post:
+          url: "/auth/login"
+          json:
+            email: "{{ randomEmail }}"
+            password: "{{ randomPassword }}"
+          capture:
+            - json: "$.token"
+              as: "userToken"
+          expect:
+            - statusCode: [200, 403] # 200 if email verification not required, 403 if required
+
+      # If login successful, perform self-management operations
+      - think: 1
+      - log: "Viewing own user profile"
+      - get:
+          url: "/user/{{ selfUserId }}"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+          expect:
+            - statusCode: [200, 401] # 401 if login failed due to verification
+
+      # Request password reset
+      - log: "Requesting password reset"
+      - post:
+          url: "/auth/forgot-password"
+          json:
+            email: "{{ randomEmail }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Concurrent user access patterns"
+    weight: 3
+    flow:
+      # Login as regular user
+      - log: "Logging in as regular user"
+      - post:
+          url: "/auth/login"
+          json:
+            email: "{{ users[1].email }}"
+            password: "{{ users[1].password }}"
+          capture:
+            - json: "$.token"
+              as: "regularUserToken"
+            - json: "$.userId"
+              as: "regularUserId"
+          expect:
+            - statusCode: 200
+
+      # Simulate multiple concurrent requests
+      - log: "Making multiple concurrent requests"
+      - get:
+          url: "/user/{{ regularUserId }}"
+          headers:
+            Authorization: "Bearer {{ regularUserToken }}"
+          expect:
+            - statusCode: 200
+
+      # Get all users (if permitted)
+      - get:
+          url: "/user"
+          headers:
+            Authorization: "Bearer {{ regularUserToken }}"
+          expect:
+            - statusCode: [200, 403] # 200 if allowed, 403 if not authorized
+
+      # Try to access another user's data (should be forbidden unless admin)
+      - get:
+          url: "/user/{{ $randomString(24) }}" # Random ID that's not the user's
+          headers:
+            Authorization: "Bearer {{ regularUserToken }}"
+          expect:
+            - statusCode: [403, 404] # 403 if forbidden, 404 if not found but allowed to search
