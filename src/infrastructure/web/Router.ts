@@ -46,7 +46,9 @@ export class RouterFactory {
     router.use(express.urlencoded({ extended: false }));
     router.use(cookieParser());
     router.use(hpp({ whitelist: ['sort'] }));
-    router.use(xss());
+    if (this.config.env === 'production') {
+      router.use(xss());
+    }
     router.use(compress());
     router.use(favicon(path.resolve('public', 'favicon.ico')));
     router.use(this.loggingMiddleware.asMiddleware());
@@ -54,8 +56,7 @@ export class RouterFactory {
     if (this.config.env === 'production') {
       const limiter = rateLimit({
         windowMs: 15 * 60 * 1000,
-        limit: 100,
-        standardHeaders: 'draft-8',
+        standardHeaders: 'draft-6',
         legacyHeaders: false
       });
       router.use(limiter);
@@ -93,8 +94,7 @@ export class RouterFactory {
 
     const authLimiter = rateLimit({
       windowMs: 15 * 60 * 1000, // 15 minutes
-      limit: 5, // 5 requests per windowMs
-      standardHeaders: 'draft-8',
+      standardHeaders: 'draft-6',
       legacyHeaders: false
     });
 
@@ -106,7 +106,11 @@ export class RouterFactory {
 
     // Mount modules
     apiRouter.use('/user', this.userModule.router);
-    apiRouter.use('/auth', authLimiter, this.authModule.router);
+    apiRouter.use(
+      '/auth',
+      this.config.env === 'production' ? authLimiter : (_req, _res, next) => next(),
+      this.authModule.router
+    );
 
     return apiRouter;
   }
